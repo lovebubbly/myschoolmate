@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Notice {
+  id        Int      @id @default(autoincrement())
+  title     String
+  url       String   @unique
+  date      String   // Keeping as String initially to avoid parsing issues during crawl, can parse later or in logic. Actually DateTime is better if we parse immediately. I'll stick to String for 'date' from website (e.g. "2025.12.24.") and 'crawledAt' as DateTime.
+  category  String   // "Academic", "Scholarship", "General", "Employment"
+  
+  content   String?
+  
+  // Filter Criteria (Extracted)
+  minGrade  Int?
+  maxIncome Int?     // e.g. 8 (meaning 0~8)
+  minGpa    Float?
+  
+  deadline  String?
+  
+  processed Boolean  @default(false) // If processed by Gemini/AI
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
+

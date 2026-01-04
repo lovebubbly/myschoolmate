@@ -11,8 +11,8 @@ export async function GET() {
 
         return NextResponse.json({
             success: true,
-            academic: aca.count,
-            scholarship: schol.count
+            academic: aca.length,
+            scholarship: schol.length
         });
     } catch (error) {
         return NextResponse.json({ success: false, error: String(error) }, { status: 500 });

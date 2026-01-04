@@ -1,24 +1,56 @@
 
 import { NextResponse } from 'next/server';
-import { getAIBriefing } from '@/lib/gemini';
 import { prisma } from '@/lib/prisma';
+import { getAIBriefing } from '@/lib/gemini';
 
-export async function POST(req: Request) {
+export async function GET() {
     try {
-        const { userProfile } = await req.json();
+        const USER_ID = 1;
 
-        // Fetch relevant notices from DB (e.g. today or last 3 days)
-        // For prototype, fetch last 10 notices
-        const notices = await prisma.notice.findMany({
-            take: 10,
-            orderBy: { date: 'desc' },
-            select: { title: true, category: true, date: true }
+        // 1. Get User Profile
+        const profile = await prisma.userProfile.findUnique({ where: { id: USER_ID } });
+        if (!profile) {
+            return NextResponse.json({ success: false, message: 'Profile not found' });
+        }
+
+        // 2. Check Cache (DailyBriefing)
+        // Get today's date in KST (YYYY-MM-DD)
+        const today = new Date().toLocaleDateString('ko-KR', {
+            year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Seoul'
+        }).replace(/\. /g, '-').replace(/\./g, '');
+
+        const cached = await prisma.dailyBriefing.findFirst({
+            where: {
+                userId: USER_ID,
+                date: today
+            }
         });
 
-        const briefing = await getAIBriefing(notices, userProfile);
+        if (cached) {
+            return NextResponse.json({ success: true, briefing: cached.content, cached: true });
+        }
 
-        return NextResponse.json({ briefing });
-    } catch (error) {
-        return NextResponse.json({ error: String(error) }, { status: 500 });
+        // 3. Generate New
+        const notices = await prisma.notice.findMany({
+            orderBy: { id: 'desc' },
+            take: 30 // Look at more notices
+        });
+
+        const profileStr = `Grade: ${profile.grade}, Income Decile: ${profile.income}, Track ID: ${profile.trackId || 'None'}`;
+        const briefing = await getAIBriefing(notices, profileStr);
+
+        // 4. Save Cache
+        await prisma.dailyBriefing.create({
+            data: {
+                userId: USER_ID,
+                content: briefing,
+                date: today
+            }
+        });
+
+        return NextResponse.json({ success: true, briefing, cached: false });
+    } catch (e) {
+        console.error(e);
+        return NextResponse.json({ success: false, error: String(e) }, { status: 500 });
     }
 }

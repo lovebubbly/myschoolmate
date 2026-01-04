@@ -15,11 +15,13 @@ model Notice {
   category  String   // "Academic", "Scholarship", "General", "Employment"
   
   content   String?
+  summary   String?
   
   // Filter Criteria (Extracted)
   minGrade  Int?
   maxIncome Int?     // e.g. 8 (meaning 0~8)
   minGpa    Float?
+  scholarshipType String?
   
   deadline  String?
   
@@ -27,6 +29,42 @@ model Notice {
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UserProfile {
+  id        Int      @id @default(autoincrement())
+  grade     Int      @default(1)
+  income    Int      @default(10) // 0-10, 10=default/rich/unknown constraint? Let's say 10 is max. 
+  gpa       Float    @default(0.0)
+  trackId   Int?
+  track     Track?   @relation(fields: [trackId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Track {
+  id          Int      @id @default(autoincrement())
+  name        String   // "정보통신 및 네트워크", etc.
+  courses     Course[]
+  users       UserProfile[]
+}
+
+model Course {
+  id        String   @id // Course Number (e.g., 5108112)
+  name      String
+  credit    String   // e.g. "3-3-0"
+  grade     Int?     // Recommended Grade (1-4)
+  semester  Int?     // 1 or 2
+  category  String?  // "전공 필수", "전공 선택", "교양"
+  tracks    Track[] 
+}
+
+model DailyBriefing {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  content   String
+  date      String   // YYYY-MM-DD to check uniqueness per day
+  createdAt DateTime @default(now())
 }
 
 

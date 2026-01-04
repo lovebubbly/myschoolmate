@@ -4,6 +4,7 @@
             {
                 "code": "5108112",
                 "name": "미래 설계 탐색",
+                "english": "Exploration of Future Planning",
                 "type": "전선",
                 "credit": 1
             }
@@ -13,48 +14,56 @@
             {
                 "code": "5108075",
                 "name": "정보통신 개론",
+                "english": "Introduction to Information and Communications",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108076",
                 "name": "전자기학",
+                "english": "Electromagnetics",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108002",
                 "name": "회로 이론 I",
+                "english": "Circuit Theory I",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108003",
                 "name": "공학 수학 I",
+                "english": "Engineering Mathematics I",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108004",
                 "name": "회로실험 I",
+                "english": "Circuits Lab. I",
                 "type": "전필",
                 "credit": 2
             },
             {
                 "code": "5108123",
                 "name": "디지털논리회로",
+                "english": "Digital Logic Circuits",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108113",
                 "name": "고급 컴퓨터 프로그래밍",
+                "english": "Advanced Computer Programming",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108097",
                 "name": "오픈소스 기초 프로젝트",
+                "english": "Open Source Project Fundamental Practice",
                 "type": "전선",
                 "credit": 1
             }
@@ -63,48 +72,56 @@
             {
                 "code": "5108063",
                 "name": "임베디드 소프트웨어실습",
+                "english": "Embedded Software Lab.",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108028",
                 "name": "컴퓨터네트워크",
+                "english": "Computer Network",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108007",
                 "name": "회로실험 II",
+                "english": "Circuits Lab. II",
                 "type": "전선",
                 "credit": 2
             },
             {
                 "code": "5108008",
                 "name": "확률 및 통계",
+                "english": "Probability and Random Variables",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108010",
                 "name": "회로 이론 II",
+                "english": "Circuit Theory II",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108012",
                 "name": "공학 수학 II",
+                "english": "Engineering Mathematics II",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108124",
                 "name": "객체지향 프로그래밍",
+                "english": "Object-Oriented Programming",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108098",
                 "name": "오픈소스 개발 프로젝트",
+                "english": "Open Source Project Development Practice",
                 "type": "전선",
                 "credit": 1
             }
@@ -113,54 +130,63 @@
             {
                 "code": "5108013",
                 "name": "전자회로 I",
+                "english": "Electronic Circuit I",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108014",
                 "name": "통신공학",
+                "english": "Communication Engineering",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108018",
                 "name": "자료구조",
+                "english": "Data Structure",
                 "type": "전필",
                 "credit": 3
             },
             {
                 "code": "5108107",
                 "name": "운영체제",
+                "english": "Operating System",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108117",
                 "name": "고주파 시스템공학",
+                "english": "Radio Frequency Systems Engineering",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108023",
                 "name": "신호 및 시스템",
+                "english": "Signal and System",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108044",
                 "name": "자바 프로그래밍",
+                "english": "Java Programming",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108020",
                 "name": "데이터통신 설계",
+                "english": "Data Communication Design",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108099",
                 "name": "오픈소스 전문 프로젝트",
+                "english": "Open Source Project Application Practice",
                 "type": "전선",
                 "credit": 1
             }
@@ -169,36 +195,77 @@
             {
                 "code": "5108118",
                 "name": "전자통신 실험",
+                "english": "Electronic Communications Lab",
                 "type": "전필",
                 "credit": 2
             },
             {
                 "code": "5108100",
                 "name": "산학프로젝트(종합 설계)",
+                "english": "Interlink Project Practice, Comprehensive Design",
                 "type": "전필",
                 "credit": 1
             },
             {
                 "code": "5108024",
                 "name": "전자회로 II",
+                "english": "Electronic Circuit II",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108027",
                 "name": "디지털통신",
+                "english": "Digital Communication",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108101",
                 "name": "빅데이터 시스템 설계",
+                "english": "Bigdata System Design",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108029",
+                "name": "인터넷 통신 설계",
+                "english": "Internet Communication Design",
                 "type": "전선",
                 "credit": 3
             },
             {
                 "code": "5108114",
                 "name": "마이크로프로세서",
+                "english": "Microprocessor",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108070",
+                "name": "모바일 프로그래밍 및 실습",
+                "english": "Mobile Programming & Lab.",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108043",
+                "name": "디지털신호처리 설계",
+                "english": "Digital Signal Processing Design",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108109",
+                "name": "지능형 영상처리",
+                "english": "Intelligent Image Processing",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108084",
+                "name": "안테나 설계",
+                "english": "Antenna Lab.",
                 "type": "전선",
                 "credit": 3
             }
@@ -207,8 +274,130 @@
             {
                 "code": "5108102",
                 "name": "캡스톤디자인",
+                "english": "Capstone Design",
                 "type": "전필",
                 "credit": 1
+            },
+            {
+                "code": "5108103",
+                "name": "임베디드IoT 응용실험",
+                "english": "Embedded IoT Applications Labs.",
+                "type": "전선",
+                "credit": 2
+            },
+            {
+                "code": "5108119",
+                "name": "SoC설계 및 실습",
+                "english": "SoC Design and Practice",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108121",
+                "name": "지능형 통신 공학",
+                "english": "Intelligent Communication Engineering",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108095",
+                "name": "딥러닝 이론 및 실습",
+                "english": "Deep Learning Theory and Practice",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108120",
+                "name": "인공지능입문",
+                "english": "Introduction to Artificial Intelligence",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5100012",
+                "name": "창업 산학 초청세미나 I",
+                "english": "Entrepreneurship Special Seminar I",
+                "type": "전선",
+                "credit": 1
+            },
+            {
+                "code": "5108104",
+                "name": "지능형 네트워크",
+                "english": "Intelligent Network",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5100008",
+                "name": "인턴십 I",
+                "english": "Cooperative education I",
+                "type": "일선",
+                "credit": 3
+            },
+            {
+                "code": "5100011",
+                "name": "인턴십 IV",
+                "english": "Cooperative education IV",
+                "type": "일선",
+                "credit": 15
+            }
+        ],
+        "4-2": [
+            {
+                "code": "5108115",
+                "name": "지능형시스템",
+                "english": "Intelligent System",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108047",
+                "name": "무선통신망 공학",
+                "english": "Wireless Communication Line Network Engineering",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5108116",
+                "name": "VLSI 설계 및 실습",
+                "english": "VLSI Design and Practice",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5100013",
+                "name": "창업 산학 초청 세미나 II",
+                "english": "Entrepreneurship Special Seminar II",
+                "type": "전선",
+                "credit": 1
+            },
+            {
+                "code": "5108106",
+                "name": "창업 파일럿프로젝트(종합 설계)",
+                "english": "Entrepreneurship Capstone Design(Comprehensive Design)",
+                "type": "전선",
+                "credit": 1
+            },
+            {
+                "code": "5108122",
+                "name": "정보 · 컴퓨터 논리 및 논술",
+                "english": "Logic and Essay Writing in Computer Education",
+                "type": "전선",
+                "credit": 3
+            },
+            {
+                "code": "5100009",
+                "name": "인턴십 II",
+                "english": "Cooperative education II",
+                "type": "일선",
+                "credit": 15
+            },
+            {
+                "code": "5100010",
+                "name": "인턴십 III",
+                "english": "Cooperative education III",
+                "type": "일선",
+                "credit": 3
             }
         ]
     },

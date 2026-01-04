@@ -1,15 +1,12 @@
 import { NextResponse } from 'next/server';
-import { crawlNotices } from '@/lib/crawler';
 import { prisma } from '@/lib/prisma';
 
-export async function POST() {
-    try {
-        // 1. Run Crawler (Upserts to DB)
-        await crawlNotices();
+export const dynamic = 'force-dynamic'; // Ensure no caching for latest data
 
-        // 2. Fetch fresh data from DB
+export async function GET() {
+    try {
         const notices = await prisma.notice.findMany({
-            orderBy: { id: 'desc' }
+            orderBy: { id: 'desc' } // or createdAt desc
         });
 
         return NextResponse.json({
@@ -17,7 +14,7 @@ export async function POST() {
             notices: notices
         });
     } catch (error) {
-        console.error('Crawl Error:', error);
+        console.error('Read Error:', error);
         return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
     }
 }

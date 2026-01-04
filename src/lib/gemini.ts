@@ -1,33 +1,51 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Start with Gemini 3.0 Flash if available, or 2.0 Flash / 1.5 Flash. Use generic model name.
-// User mentioned "Gemini 3.0 Flash". If API supports it via 'gemini-3.0-flash-001' or similar.
-// Currently usually 'gemini-2.0-flash-exp' or 'gemini-1.5-flash'. 
-// I will try 'gemini-2.0-flash-exp' as proxy for "newest" or 'gemini-1.5-flash' which is stable. 
-// User Request: "Gemini 3.0 flash API 사용도 가능하다". I will assume model alias if exists, else fallback.
-// Standardize on 'gemini-1.5-flash' for reliability or 'gemini-2.0-flash-exp' for cutting edge.
-// I will use 'gemini-1.5-flash' for now as 3.0 might not be public in SDK yet or has specific name.
-// Update: User said "Gemini 3.0 Flash". I will use that string if user insists, but check docs? 
-// I'll use 'gemini-1.5-flash' as a safe default but comment.
+// Regex Helpers
+function extractByRegex(title: string, body: string) {
+    const text = `${title} ${body}`;
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    // Income: "8구간", "8분위"
+    const incomeMatch = text.match(/([0-9]+)\s*(구간|분위)/);
+    const maxIncome = incomeMatch ? parseInt(incomeMatch[1]) : null;
+
+    // Grade: "3학년", "3~4학년" 
+    // If range "3~4", min is 3. If "3학년 이상", min is 3.
+    const gradeMatch = text.match(/([1-4])\s*학년/);
+    const minGrade = gradeMatch ? parseInt(gradeMatch[1]) : null;
+
+    // Date: 2025. 12. 24 or 2025-12-24 or 2025/12/24
+    const dateMatch = text.match(/20[2-3][0-9][.\-/]\s*[0-1]?[0-9][.\-/]\s*[0-3]?[0-9]/);
+    let applicationDeadline = dateMatch ? dateMatch[0].replace(/[\s]/g, '') : null;
+    // Standardize to YYYY.MM.DD
+    if (applicationDeadline) {
+        applicationDeadline = applicationDeadline.replace(/-/g, '.').replace(/\//g, '.');
+    }
+
+    // GPA
+    const gpaMatch = text.match(/([2-4]\.[0-9])\s*(?:이상|\/|만점)/);
+    const minGpa = gpaMatch ? parseFloat(gpaMatch[1]) : null;
+
+    return { maxIncome, minGrade, applicationDeadline, minGpa };
+}
 
 export async function getAIBriefing(notices: any[], userProfile: string) {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    // Using 1.5-flash as it is stable and cost-effective for high volume text generation
+    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
 
     const prompt = `
     You are an academic assistant for a Information & Communication Engineering student.
     User Profile: ${userProfile}
     
-    Here are today's notices:
+    Here are the notices:
     ${JSON.stringify(notices.map(n => n.title))}
     
     Task:
-    1. Select the most important notices for this user.
+    1. Select the top 3 most important notices specifically for this user.
     2. Write a brief, friendly "Morning Briefing" (in Korean).
     3. Use a "Nudge" tone (e.g., "Don't miss this scholarship!").
-    4. Format as markdown.
+    4. Return ONLY the markdown text.
   `;
 
     try {
@@ -36,5 +54,61 @@ export async function getAIBriefing(notices: any[], userProfile: string) {
     } catch (e) {
         console.error('Gemini Error:', e);
         return '현재 AI 브리핑을 생성할 수 없습니다.';
+    }
+}
+
+export async function analyzeNotice(title: string, body: string): Promise<{
+    summary: string;
+    minGrade: number | null;
+    maxIncome: number | null;
+    scholarshipType: string;
+    applicationDeadline: string | null;
+    minGpa?: number | null;
+}> {
+    // 1. Regex Extraction (Cost-free, high precision for format)
+    const regexData = extractByRegex(title, body);
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview', generationConfig: { responseMimeType: "application/json" } });
+
+    const prompt = `
+    Analyze this notice and extract information.
+    Title: ${title}
+    Body: ${body.slice(0, 5000)}
+
+    Task:
+    1. Summarize in Korean (1 sentence).
+    2. Identify scholarship type (Tuition, LivingSupport, Program, Job, Other).
+    3. Extract minGrade (1-4) and maxIncome (0-10) if mentioned.
+    4. Extract deadline (YYYY.MM.DD).
+    5. Extract minGpa (e.g. 3.0) if mentioned.
+
+    Return JSON: { "summary", "scholarshipType", "minGrade", "maxIncome", "applicationDeadline", "minGpa" }
+    `;
+
+    try {
+        const result = await model.generateContent(prompt);
+        const aiData = JSON.parse(result.response.text());
+
+        return {
+            summary: aiData.summary || "요약 없음",
+            scholarshipType: aiData.scholarshipType || "Other",
+            minGrade: regexData.minGrade ?? aiData.minGrade,
+            maxIncome: regexData.maxIncome ?? aiData.maxIncome,
+            applicationDeadline: regexData.applicationDeadline ?? aiData.applicationDeadline,
+            minGpa: regexData.minGpa ?? aiData.minGpa
+        };
+
+    } catch (e) {
+        console.error('Gemini Analysis Error:', e);
+        // Fallback to purely regex data if AI fails
+        return {
+            summary: "AI 분석 실패 (키워드 추출)",
+            minGrade: regexData.minGrade,
+            maxIncome: regexData.maxIncome,
+            scholarshipType: "Other",
+            applicationDeadline: regexData.applicationDeadline,
+            minGpa: regexData.minGpa
+        };
     }
 }

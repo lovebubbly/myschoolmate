@@ -6,13 +6,22 @@ function extractByRegex(title: string, body: string) {
     const text = `${title} ${body}`;
 
     // Income: "8구간", "8분위"
+    let maxIncome: number | null = null;
     const incomeMatch = text.match(/([0-9]+)\s*(구간|분위)/);
-    const maxIncome = incomeMatch ? parseInt(incomeMatch[1]) : null;
+    if (incomeMatch) {
+        maxIncome = parseInt(incomeMatch[1]);
+    } else if (text.includes('기초생활') || text.includes('기초수급') || text.includes('차상위')) {
+        maxIncome = 0;
+    }
 
     // Grade: "3학년", "3~4학년" 
-    // If range "3~4", min is 3. If "3학년 이상", min is 3.
+    let minGrade: number | null = null;
     const gradeMatch = text.match(/([1-4])\s*학년/);
-    const minGrade = gradeMatch ? parseInt(gradeMatch[1]) : null;
+    if (gradeMatch) {
+        minGrade = parseInt(gradeMatch[1]);
+    } else if (text.includes('신입생')) {
+        minGrade = 1;
+    }
 
     // Date: 2025. 12. 24 or 2025-12-24 or 2025/12/24
     const dateMatch = text.match(/20[2-3][0-9][.\-/]\s*[0-1]?[0-9][.\-/]\s*[0-3]?[0-9]/);
@@ -22,8 +31,9 @@ function extractByRegex(title: string, body: string) {
         applicationDeadline = applicationDeadline.replace(/-/g, '.').replace(/\//g, '.');
     }
 
-    // GPA
-    const gpaMatch = text.match(/([2-4]\.[0-9])\s*(?:이상|\/|만점)/);
+    // GPA: Handle 2.0~4.5 range, and various formats
+    const gpaMatch = text.match(/(?:성적|평점|GPA).*?([2-4]\.[0-9][0-9]?)/i) ||
+        text.match(/([2-4]\.[0-9][0-9]?)\s*(?:이상|\/|만점)/);
     const minGpa = gpaMatch ? parseFloat(gpaMatch[1]) : null;
 
     return { maxIncome, minGrade, applicationDeadline, minGpa };
@@ -110,5 +120,42 @@ export async function analyzeNotice(title: string, body: string): Promise<{
             applicationDeadline: regexData.applicationDeadline,
             minGpa: regexData.minGpa
         };
+    }
+}
+
+/**
+ * Format raw notice content into clean, readable markdown.
+ * Handles tables, lists, links, and proper spacing.
+ */
+export async function formatNoticeContent(rawContent: string): Promise<string> {
+    if (!rawContent || rawContent.length < 50) return rawContent;
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    const prompt = `You are a content formatter. Convert the following raw Korean notice text into clean, well-structured Markdown.
+
+**Rules:**
+1. Preserve ALL original information - do not summarize or remove content
+2. Format tables using proper Markdown table syntax (| header | header |)
+3. Use bullet lists (- or *) for list items
+4. Use **bold** for important dates, deadlines, and key terms
+5. Add proper line breaks between sections
+6. Format links as [text](url) if URLs are present
+7. Clean up excessive whitespace but keep logical paragraph breaks
+8. Keep the language in Korean - do not translate
+9. If there's a schedule/timeline, format it as a table
+10. Output ONLY the formatted markdown, no explanations
+
+Raw content:
+${rawContent.slice(0, 8000)}`;
+
+    try {
+        const result = await model.generateContent(prompt);
+        const formatted = result.response.text();
+        return formatted || rawContent;
+    } catch (e) {
+        console.error('Content formatting error:', e);
+        return rawContent; // Return original if formatting fails
     }
 }

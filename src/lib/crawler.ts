@@ -1,7 +1,7 @@
 
 import { chromium, Page } from 'playwright';
 import { prisma } from '@/lib/prisma';
-import { analyzeNotice } from './gemini';
+import { analyzeNotice, formatNoticeContent } from './gemini';
 
 export interface NoticeData {
     title: string;
@@ -30,30 +30,40 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
 
     let allNotices: NoticeData[] = [];
 
+    // Helper for navigation with retries
+    async function safeNavigate(page: Page, url: string, retries = 2) {
+        for (let i = 0; i <= retries; i++) {
+            try {
+                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                return;
+            } catch (e) {
+                if (i === retries) throw e;
+                console.log(`Retry navigating to ${url} (${i + 1}/${retries})`);
+                await new Promise(r => setTimeout(r, 2000));
+            }
+        }
+    }
+
     try {
         for (const board of BOARDS) {
-            // Optional filter if we only want to crawl specific boards (logic from user request history or typical pattern)
-            // For now, I'll keep the loop but we can optimize later if needed.
-            // The method signature allowed 'targetBoard' arguments in previous revisions (run_crawl.ts calls it), but the implementation didn't fully use them. 
-            // I will adhere to the existing logic which iterates all BOARDS, but maybe I should respect the args?
-            // "run_crawl.ts" calls: crawlNotices('cisub5_1', '407');
-            // But the current definition I read earlier: export async function crawlNotices(): Promise<NoticeData[]> 
-            // Wait, looking at "run_crawl.ts" Step 17: "await crawlNotices('cisub5_1', '407');"
-            // Looking at "crawler.ts" Step 25: "export async function crawlNotices(): Promise<NoticeData[]>"
-            // The arguments are MISMATCHED. The definition has NO arguments.
-            // I will fix the signature to optionally accept arguments, but mostly importantly implement the DB logic.
-
             console.log(`Crawling ${board.name}: ${board.url}`);
-            await page.goto(board.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            try {
+                await safeNavigate(page, board.url);
+            } catch (err) {
+                console.error(`Failed to navigate to board ${board.name}`, err);
+                continue;
+            }
 
             // Wait for list
-            await page.waitForSelector('table tbody tr', { timeout: 5000 }).catch(() => console.log(`Timeout waiting for table on ${board.name}`));
+            await page.waitForSelector('table tbody tr', { timeout: 10000 }).catch(() => console.log(`Timeout waiting for table on ${board.name}`));
 
             const links = await page.evaluate(() => {
                 const rows = Array.from(document.querySelectorAll('table tbody tr'));
-                return rows.slice(0, 3).map(row => { // Limit to top 3 for speed
+                // Skip notices (공지) tags if they persist, usually they have a special class or icon
+                // For now, take top 15 regular or pinned
+                return rows.slice(0, 100).map(row => {
                     const linkEl = row.querySelector('td.subject a') || row.querySelector('td.td_subject a') || row.querySelector('a');
-                    const dateEl = row.querySelectorAll('td')[row.querySelectorAll('td').length - 2]; // heuristics
+                    const dateEl = row.querySelectorAll('td')[row.querySelectorAll('td').length - 2];
 
                     if (!linkEl) return null;
 
@@ -64,7 +74,7 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                     if (!href) return null;
 
                     return {
-                        title,
+                        title: title.replace(/^\[공지\]\s*/, ''),
                         url: href.startsWith('http') ? href : `https://inform.chungbuk.ac.kr${href}`,
                         date
                     };
@@ -75,66 +85,74 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
             for (const link of links) {
                 if (!link) continue;
 
-                // Check if exists in DB to avoid re-crawling details if unchanged?
-                // For simplicity and to ensure fresh AI analysis if wanted, we might just overwrite. 
-                // But efficient crawling would check if URL exists.
-                // Let's check DB first.
+                // Incremental Check: If already processed, we stop for THIS board because they are chronological
                 const existing = await prisma.notice.findUnique({ where: { url: link.url } });
                 if (existing && existing.processed) {
-                    console.log(`Skipping already processed: ${link.title}`);
-                    // Push to allNotices so it returns valid data?
-                    // Convert DB model to NoticeData
-                    allNotices.push({
-                        title: existing.title,
-                        url: existing.url,
-                        category: existing.category,
-                        date: existing.date,
-                        summary: existing.summary || undefined,
-                        minGrade: existing.minGrade,
-                        maxIncome: existing.maxIncome,
-                        scholarshipType: existing.scholarshipType || undefined,
-                        applicationDeadline: existing.deadline,
-                        body: existing.content || undefined
-                    });
-                    continue;
+                    console.log(`Board ${board.name}: Reached already processed notice [${link.title}]. Stopping board crawl.`);
+                    break;
                 }
 
                 try {
                     const detailPage = await context.newPage();
-                    await detailPage.goto(link.url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                    await safeNavigate(detailPage, link.url);
 
                     // Extract Body Text
-                    const bodyText = await detailPage.evaluate(() => {
-                        const contentDiv = document.querySelector('.read_body') || document.querySelector('.con_area') || document.querySelector('#txt');
-                        return contentDiv ? contentDiv.textContent?.trim() : document.body.innerText;
+                    const bodyContent = await detailPage.evaluate(() => {
+                        const contentDiv = (document.querySelector('.xe_content') || document.querySelector('.rd_body') || document.querySelector('.read_body')) as HTMLElement;
+                        if (!contentDiv) return null;
+
+                        // 1. Handle Tables
+                        const tables = Array.from(contentDiv.querySelectorAll('table'));
+                        tables.forEach(table => {
+                            let tableMd = '\n\n';
+                            const rows = Array.from(table.rows);
+                            rows.forEach((row, i) => {
+                                const cells = Array.from(row.cells).map(c => c.textContent?.trim().replace(/\|/g, '\\|') || '');
+                                tableMd += '| ' + cells.join(' | ') + ' |\n';
+                                if (i === 0) {
+                                    tableMd += '| ' + cells.map(() => '---').join(' | ') + ' |\n';
+                                }
+                            });
+                            tableMd += '\n';
+                            const placeholder = document.createTextNode(tableMd);
+                            table.parentNode?.replaceChild(placeholder, table);
+                        });
+
+                        let text = contentDiv.innerText;
+                        text = text.replace(/\n\s*\n\s*\n+/g, '\n\n');
+                        return text.trim();
                     });
 
                     await detailPage.close();
 
+                    // Format content with Gemini for clean markdown (tables, lists, etc.)
+                    console.log(`Formatting: ${link.title}`);
+                    const formattedContent = bodyContent ? await formatNoticeContent(bodyContent) : null;
+
                     // Analyze with Gemini
                     console.log(`Analyzing: ${link.title}`);
-                    const analysis = await analyzeNotice(link.title, bodyText || '');
+                    const analysis = await analyzeNotice(link.title, bodyContent || '');
 
                     const noticeData: NoticeData = {
                         title: link.title,
                         url: link.url,
                         category: board.name,
                         date: link.date,
-                        body: bodyText?.slice(0, 5000), // Limit body size for DB text column if needed, though SQLite handles large text
+                        body: formattedContent?.slice(0, 15000) || bodyContent?.slice(0, 10000),
                         ...analysis
                     };
 
                     allNotices.push(noticeData);
 
-                    // Save to DB
+                    // Upsert notice
                     await prisma.notice.upsert({
                         where: { url: link.url },
                         update: {
                             title: noticeData.title,
                             date: noticeData.date,
                             category: noticeData.category,
-                            content: noticeData.body,
-                            summary: noticeData.summary,
+                            content: bodyContent,
+                            summary: analysis.summary,
                             minGrade: noticeData.minGrade,
                             maxIncome: noticeData.maxIncome,
                             scholarshipType: noticeData.scholarshipType,
@@ -146,8 +164,8 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                             url: noticeData.url,
                             date: noticeData.date,
                             category: noticeData.category,
-                            content: noticeData.body,
-                            summary: noticeData.summary,
+                            content: bodyContent,
+                            summary: analysis.summary,
                             minGrade: noticeData.minGrade,
                             maxIncome: noticeData.maxIncome,
                             scholarshipType: noticeData.scholarshipType,

@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 
 export function LoadingOverlay({ message = "AI가 공지사항을 분석하고 있어요..." }: { message?: string }) {
     return (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/60 backdrop-blur-md rounded-3xl transition-all duration-500">
+        <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background/80 backdrop-blur-md transition-all duration-500">
             <div className="relative">
                 {/* Outer Ring */}
                 <motion.div

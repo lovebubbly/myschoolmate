@@ -27,7 +27,13 @@ export async function GET() {
         });
 
         if (cached) {
-            return NextResponse.json({ success: true, briefing: cached.content, cached: true });
+            // Check if profile was updated AFTER the briefing was created
+            if (new Date(profile.updatedAt) > new Date(cached.createdAt)) {
+                // Profile changed, so we need to regenerate
+                await prisma.dailyBriefing.delete({ where: { id: cached.id } });
+            } else {
+                return NextResponse.json({ success: true, briefing: cached.content, cached: true });
+            }
         }
 
         // 3. Generate New

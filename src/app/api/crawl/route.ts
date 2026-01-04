@@ -4,15 +4,18 @@ import { crawlNotices } from '@/lib/crawler';
 
 export async function GET() {
     try {
-        // Crawl both academic and scholarship
-        // 407: Academic, 408: Scholarship
-        const aca = await crawlNotices('cisub5_1', '407');
-        const schol = await crawlNotices('cisub5_1', '408');
+        // Crawl ALL boards (Academic/Scholarship, General, Employment, News)
+        const notices = await crawlNotices();
 
         return NextResponse.json({
             success: true,
-            academic: aca.length,
-            scholarship: schol.length
+            total: notices.length,
+            byCategory: {
+                academic: notices.filter(n => n.category === 'Academic/Scholarship').length,
+                general: notices.filter(n => n.category === 'General').length,
+                employment: notices.filter(n => n.category === 'Employment').length,
+                news: notices.filter(n => n.category === 'News').length
+            }
         });
     } catch (error) {
         return NextResponse.json({ success: false, error: String(error) }, { status: 500 });

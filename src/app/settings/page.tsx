@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
@@ -11,6 +12,7 @@ interface Track {
 }
 
 export default function Settings() {
+    const router = useRouter();
     const [grade, setGrade] = useState('1');
     const [income, setIncome] = useState('10');
     const [gpa, setGpa] = useState('0.0');
@@ -30,7 +32,7 @@ export default function Settings() {
     };
 
     const fetchProfile = async () => {
-        const res = await fetch('/api/user/profile');
+        const res = await fetch('/api/user/profile', { cache: 'no-store' });
         const data = await res.json();
         if (data.success && data.profile) {
             setGrade(String(data.profile.grade));
@@ -43,19 +45,33 @@ export default function Settings() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            await fetch('/api/user/profile', {
+            const payload = {
+                grade: parseInt(grade),
+                income: parseInt(income),
+                gpa: parseFloat(gpa),
+                trackId: trackId ? parseInt(trackId) : null
+            };
+            console.log('Sending payload:', payload);
+
+            const res = await fetch('/api/user/profile', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    grade: parseInt(grade),
-                    income: parseInt(income),
-                    gpa: parseFloat(gpa),
-                    trackId: trackId ? parseInt(trackId) : null
-                })
+                body: JSON.stringify(payload)
             });
-            window.location.href = '/';
+
+            if (res.ok) {
+                const data = await res.json();
+                console.log('Save success:', data);
+                router.refresh(); // Refresh server data
+                router.push('/');
+            } else {
+                const err = await res.text();
+                console.error('Save failed:', err);
+                alert('저장에 실패했습니다. 다시 시도해주세요.');
+            }
         } catch (e) {
             console.error('Failed to save profile:', e);
+            alert('저장 중 오류가 발생했습니다.');
         }
         setSaving(false);
     };

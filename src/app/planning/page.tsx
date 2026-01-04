@@ -16,7 +16,7 @@ export default function Planning() {
     }, []);
 
     const loadData = async () => {
-        const pRes = await fetch('/api/user/profile');
+        const pRes = await fetch('/api/user/profile', { cache: 'no-store' }); // Disable cache
         const pData = await pRes.json();
         if (pData.success) {
             setProfile(pData.profile);

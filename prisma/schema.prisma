@@ -69,3 +69,16 @@ model DailyBriefing {
 
 
 
+
+model CafeteriaMenu {
+  id          Int      @id @default(autoincrement())
+  restaurant  String   // "Hanbit", "Star", "Eunhasu"
+  date        String   // "YYYY-MM-DD" or "MM.DD(Day)"
+  mealType    String   // "BREAKFAST", "LUNCH", "DINNER"
+  menuContent String   // Main menu items
+  price       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([restaurant, date, mealType])
+}

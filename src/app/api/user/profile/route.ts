@@ -2,6 +2,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
+export const dynamic = 'force-dynamic';
+
 // Hardcoded Single User for MVP
 const USER_ID = 1;
 
@@ -52,6 +54,7 @@ export async function POST(req: Request) {
 
         return NextResponse.json({ success: true, profile });
     } catch (e) {
+        console.error('API POST /api/user/profile - Error:', e);
         return NextResponse.json({ success: false, error: String(e) }, { status: 500 });
     }
 }

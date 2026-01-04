@@ -54,7 +54,11 @@ export async function getAIBriefing(notices: any[], userProfile: string) {
     // gemini-2.5-flash-lite: stable, cost-effective, 1M context
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
-    const { greeting, emoji } = getTimeGreeting();
+    const hour = parseInt(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Seoul' }));
+    let timeContext = "Daytime";
+    if (hour >= 5 && hour < 12) timeContext = "Morning";
+    else if (hour >= 18 && hour < 22) timeContext = "Evening";
+    else if (hour >= 22 || hour < 5) timeContext = "Late Night";
 
     // Sort by date (newest first) and take recent ones
     const recentNotices = notices
@@ -71,47 +75,54 @@ export async function getAIBriefing(notices: any[], userProfile: string) {
 
     const prompt = `
 당신은 정보통신공학부 학생을 위한 학사 도우미입니다.
+
 사용자 프로필: ${userProfile}
-현재 인사: "${emoji} ${greeting}"
 
 최근 공지사항 (JSON):
 ${JSON.stringify(noticeData, null, 2)}
 
-Task:
-1. **[중요] 사용자 프로필(학년, 소득분위, GPA, 트랙)을 철저히 분석하여 가장 연관성 높은 공지 3개를 선정하세요.**
-   - 학년: 해당 학년이 지원 가능한지 확인 (예: 2학년).
-   - 소득분위: 장학금 지원 자격 부합 여부 확인.
-   - GPA: 성적 기준 만족 여부 확인 (예: 3.5 이상).
-   - 트랙: 전공 트랙과 관련된 채용/교육 공지 우선.
-2. 친근하고 간결한 브리핑을 작성하세요 (한국어).
-3. "Nudge" 톤 사용 (예: "이 기회 놓치지 마세요!").
-4. **개인화된 설명 추가:** 왜 이 공지가 사용자에게 적합한지 구체적으로 언급하세요. (예: "학우님의 소득분위 조건에 딱 맞아요", "관심 있는 임베디드 트랙 관련 소식이에요")
-5. **링크 포맷 규칙 (매우 중요):**
-   - **반드시 제목에 링크를 거세요.** 형식: **1. 이모지 [공지제목](URL)**
-   - **주의:** 공지 제목 안에 대괄호 '[]'가 있다면 소괄호 '()'로 바꾸거나 제거하여 Markdown 링크가 깨지지 않게 하세요.
-     - 나쁜 예: **[LIG넥스원] 공지...](url)** (깨짐)
-     - 좋은 예: **[(LIG넥스원) 공지...](url)** (안전함)
-   - **본문이나 끝부분에 URL을 따로 적지 마세요.** (URL 노출 금지 ❌)
-   - 제공된 'url'이 없으면 링크를 걸지 마세요.
-6. **줄바꿈을 충분히 사용**해서 가독성을 높이세요.
-7. 오래된 공지보다 **최신 공지 우선**.
-8. 시작은 "${emoji} ${greeting}!"로 시작하세요.
+---
+**Instructions for AI Assistant:**
 
-형식 예시:
-${emoji} ${greeting}!
+1.  **Goal**: Provide a personalized, concise briefing of relevant notices for the user.
+2.  **Language**: Korean.
+3.  **Current Context**: ${timeContext} (Hour: ${hour}).
+4.  **Tone**: 
+    -   **Opening**: Creative, witty, and casual greeting. **Avoid** cliché "Good morning/afternoon". Use something fresh like "Studying hard?", "Time for a break?", "Burning the midnight oil?", or "Ready to start the day?".
+    -   **Body**: Warm, encouraging, concise. Like a helpful senior.
+5.  **User Profile**:
+    -   ${userProfile}
+    -   **Income Bracket**: 0 (High Need) ~ 10 (High Income).
+        -   **Income 0~8**: High financial need. Target for need-based scholarships.
+        -   **Income 9~10**: High income. **NOT** eligible for need-based aid. Do NOT suggest need-based scholarships.
+    -   **GPA**: 4.5 scale.
 
-정보통신공학부 2학년 학우님께 딱 맞는 소식을 골라봤어요. GPA 3.5 이상이라 지원 가능한 장학금도 보이네요!
+Generate a briefing that:
+1.  **[Important] Select Top 3 Notices**: Analyze applicability.
+    -   If user is Income 9-10, prioritize Career/Internship/Events over Scholarships.
+2.  Friendly, "Nudge" tone.
+3.  **Link Format Rules (CRITICAL)**:
+    -   **Titles MUST NOT contain square brackets `[` or `]`**.
+    -   **Replace ALL square brackets in titles with parentheses `(` and `)`**.
+        -   Bad: "(LIG Next1) Recruitment" <- "[LIG Next1] Recruitment"
+    -   **Format**: **1. EMOJI [Safe Title without brackets](URL)**
+    -   Do not show raw URLs at the end.
+4.  **Personalized Explanation**:
+    -   "Since your GPA is 3.5..."
+    -   "As a 4th year student..."
+    -   (If Income 9-10): "Check out this internship for your career!" (Do NOT mention financial aid).
+5.  **Start** with your creative greeting.
 
-**1. 📢 [2025년 중앙일보 대학평가 결과](https://inform.chungbuk.ac.kr/...)**
-우리 학부가 거점국립대 1위를 달성했대요! 학우님의 전공 자부심이 뿜뿜! 👍
+Format Example:
+(Creative Greeting)
 
-**2. 💰 [국가장학금 신청 안내](https://inform.chungbuk.ac.kr/...)**
-현재 소득분위 8구간이시라 신청 가능해요. 이번 학기 장학금 놓치면 안 되죠! 💸
+Information for 2nd year student (Income 9)!
 
-**3. 🚀 [(LIG넥스원) 채용연계형 인턴](https://inform.chungbuk.ac.kr/...)**
-선택하신 임베디드 SW 트랙과 관련된 최고의 기회예요. 마감이 얼마 안 남았으니 서두르세요!
+**1. 📢 (LIG Nex1) Internship Recruitment**
+Great chance for your Embedded Track career!
 
-마무리 멘트
+**2. 🏆 (CBNU) Capstone Design Fair**
+Show off your skills!
 
 Return ONLY the formatted markdown.
   `;

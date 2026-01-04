@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, ArrowRight, Calendar, Sparkles, SlidersHorizontal, Map, Settings as SettingsIcon, LayoutGrid, List } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { LoadingOverlay, ButtonLoader } from '@/components/LoadingOverlay';
+import { CafeteriaWidget } from '@/components/CafeteriaWidget';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import {
@@ -189,7 +191,7 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
 
           <div className="text-foreground/80 leading-8 text-[15px] prose dark:prose-invert max-w-none">
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkBreaks]}
               components={{
                 strong: ({ node, ...props }) => <span className="font-bold text-primary" {...props} />,
                 p: ({ node, ...props }) => <p className="mb-4 last:mb-0" {...props} />,
@@ -201,8 +203,8 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
                   </div>
                 ),
                 thead: ({ node, ...props }) => <thead className="bg-muted/50 border-b border-border" {...props} />,
-                th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0" {...props} />,
-                td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0" {...props} />,
+                th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap" {...props} />,
+                td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[120px] break-keep" {...props} />,
                 a: ({ node, ...props }) => <a className="text-primary font-bold hover:underline underline-offset-4 break-all" {...props} target="_blank" />,
               }}
             >
@@ -255,7 +257,7 @@ export default function Home() {
 
   const fetchProfile = async () => {
     try {
-      const res = await fetch('/api/user/profile');
+      const res = await fetch('/api/user/profile', { cache: 'no-store' });
       const data = await res.json();
       if (data.success && data.profile) {
         setLoadedProfile(data.profile);
@@ -417,31 +419,80 @@ export default function Home() {
               </div>
 
               {briefingLoading ? (
-                <div className="animate-pulse space-y-3">
-                  <div className="h-4 bg-muted rounded w-3/4"></div>
-                  <div className="h-4 bg-muted rounded w-1/2"></div>
+                <div className="flex flex-col gap-4 py-2">
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse" />
+                      <Sparkles className="w-6 h-6 text-primary animate-spin-slow" style={{ animationDuration: '3s' }} />
+                    </div>
+                    <div className="space-y-1">
+                      <motion.span
+                        className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"
+                        animate={{ opacity: [0.5, 1, 0.5] }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      >
+                        AI가 데이터를 분석하고 있습니다...
+                      </motion.span>
+                      <div className="flex gap-1">
+                        {[0, 1, 2].map(i => (
+                          <motion.div
+                            key={i}
+                            className="w-1.5 h-1.5 rounded-full bg-primary/40"
+                            animate={{ scale: [1, 1.5, 1], backgroundColor: ["rgba(var(--primary), 0.4)", "rgba(var(--primary), 1)", "rgba(var(--primary), 0.4)"] }}
+                            transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2 mt-2">
+                    <motion.div
+                      className="h-4 bg-muted/50 rounded-md w-full overflow-hidden relative"
+                      initial={{ opacity: 0.5 }}
+                      animate={{ opacity: 1 }}
+                    >
+                      <motion.div
+                        className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
+                        animate={{ x: ['100%', '-100%'] }}
+                        transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+                      />
+                    </motion.div>
+                    <motion.div
+                      className="h-4 bg-muted/50 rounded-md w-3/4 overflow-hidden relative"
+                      initial={{ opacity: 0.5 }}
+                      animate={{ opacity: 1 }}
+                    >
+                      <motion.div
+                        className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
+                        animate={{ x: ['100%', '-100%'] }}
+                        transition={{ duration: 1.5, repeat: Infinity, ease: 'linear', delay: 0.2 }}
+                      />
+                    </motion.div>
+                    <motion.div
+                      className="h-4 bg-muted/50 rounded-md w-1/2 overflow-hidden relative"
+                      initial={{ opacity: 0.5 }}
+                      animate={{ opacity: 1 }}
+                    >
+                      <motion.div
+                        className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/10 to-transparent"
+                        animate={{ x: ['100%', '-100%'] }}
+                        transition={{ duration: 1.5, repeat: Infinity, ease: 'linear', delay: 0.4 }}
+                      />
+                    </motion.div>
+                  </div>
                 </div>
-              ) : briefing ? (
-                <div className="text-foreground leading-relaxed">
-                  <ReactMarkdown
-                    components={{
-                      strong: ({ node, ...props }) => <span className="font-bold text-primary" {...props} />,
-                      p: ({ node, ...props }) => <p className="mb-4 last:mb-0 text-[16px] leading-8 text-foreground/90 break-keep" {...props} />,
-                      ul: ({ node, ...props }) => <ul className="space-y-2 mb-4" {...props} />,
-                      li: ({ node, ...props }) => <li className="flex gap-2 text-[16px] leading-8 text-foreground/90 break-keep" {...props} />,
-                      h1: ({ node, ...props }) => <h3 className="text-xl font-bold text-foreground mb-3 mt-6" {...props} />,
-                      h2: ({ node, ...props }) => <h4 className="text-lg font-bold text-foreground mb-2 mt-4" {...props} />,
-                      h3: ({ node, ...props }) => <h5 className="text-base font-bold text-foreground mb-2 mt-3" {...props} />,
-                    }}
-                  >
-                    {briefing}
-                  </ReactMarkdown>
-                </div>
-              ) : (
-                <p className="text-muted-foreground">데이터를 분석 중입니다...</p>
               )}
             </motion.div>
           </motion.header>
+
+          {/* Cafeteria Widget */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+          >
+            <CafeteriaWidget />
+          </motion.div>
 
           {/* Notices Section */}
           <section className="space-y-4 relative min-h-[300px]">

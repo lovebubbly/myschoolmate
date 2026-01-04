@@ -11,6 +11,8 @@ import { LoadingOverlay, ButtonLoader } from '@/components/LoadingOverlay';
 import { CafeteriaWidget } from '@/components/CafeteriaWidget';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { GripVertical, Layout, Eye, EyeOff, ChevronUp, ChevronDown } from 'lucide-react';
+import { Mascot } from '@/components/Mascot';
+import { AIAnalyzingLoader } from '@/components/LottieAnimations';
 
 import {
   Dialog,
@@ -39,7 +41,7 @@ interface Notice {
   isPinned: boolean;
 }
 
-function NoticeCard({ notice, filterProfile, onOpen }: { notice: Notice, filterProfile: any, onOpen: (n: Notice) => void }) {
+function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Notice, filterProfile: any, onOpen: (n: Notice) => void, index?: number }) {
   // Helper for translating categories/types
   const translateType = (type: string) => {
     const map: Record<string, string> = {
@@ -61,14 +63,23 @@ function NoticeCard({ notice, filterProfile, onOpen }: { notice: Notice, filterP
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, scale: 0.98 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.98 }}
-      transition={{ duration: 0.2 }}
+      initial={{ opacity: 0, y: 30, scale: 0.95 }}
+      whileInView={{ opacity: 1, y: 0, scale: 1 }}
+      viewport={{ once: true, margin: "-50px" }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{
+        duration: 0.5,
+        delay: index * 0.05,
+        ease: [0.22, 1, 0.36, 1]
+      }}
+      whileHover={{
+        y: -4,
+        transition: { duration: 0.2 }
+      }}
       className="h-full"
     >
       <Card
-        className="group relative overflow-hidden bg-card hover:bg-muted/50 border-border/60 hover:border-primary/20 shadow-sm hover:shadow-md transition-all duration-300 rounded-[24px] cursor-pointer h-full min-h-[220px]"
+        className="group relative overflow-hidden bg-card hover:bg-muted/30 border-border/60 hover:border-primary/30 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 rounded-[24px] cursor-pointer h-full min-h-[220px]"
         onClick={() => onOpen(notice)}
       >
         <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -159,7 +170,7 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-[32px] p-0 border-none bg-card/95 backdrop-blur-xl shadow-2xl">
+      <DialogContent className="w-[95vw] md:w-[800px] lg:w-[900px] max-w-[95vw] md:max-w-[800px] lg:max-w-[900px] max-h-[90vh] overflow-y-auto overflow-x-hidden rounded-[32px] p-0 border-none bg-card/95 backdrop-blur-xl shadow-2xl">
         <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-md p-6 border-b border-border/50 flex justify-between items-start">
           <div className="space-y-1 pr-8">
             <div className="flex items-center gap-2 mb-2">
@@ -201,13 +212,13 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
                 ul: ({ node, ...props }) => <ul className="list-disc ml-5 space-y-2 my-4" {...props} />,
                 li: ({ node, ...props }) => <li {...props} />,
                 table: ({ node, ...props }) => (
-                  <div className="overflow-x-auto my-6 rounded-2xl border border-border shadow-sm bg-card/50">
-                    <table className="min-w-full divide-y divide-border text-[13px]" {...props} />
+                  <div className="overflow-x-auto max-w-full my-6 rounded-2xl border border-border shadow-sm bg-card/50">
+                    <table className="w-full divide-y divide-border text-[13px] border-collapse" {...props} />
                   </div>
                 ),
                 thead: ({ node, ...props }) => <thead className="bg-muted/50 border-b border-border" {...props} />,
-                th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap bg-muted/10" {...props} />,
-                td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[140px] break-keep leading-normal align-top" {...props} />,
+                th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap bg-muted/10 min-w-[120px]" {...props} />,
+                td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[120px] max-w-[400px] break-keep leading-normal align-top text-xs md:text-[13px]" {...props} />,
                 a: ({ node, ...props }) => <a className="text-primary font-bold hover:underline underline-offset-4 break-all" {...props} target="_blank" />,
                 h1: ({ node, ...props }) => <h1 className="text-2xl font-bold mb-4 mt-8 text-foreground" {...props} />,
                 h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-6 text-foreground border-b border-border pb-2" {...props} />,
@@ -579,11 +590,16 @@ export default function Home() {
 
             {/* AI Briefing Card */}
             <motion.div
-              className="bg-card/80 backdrop-blur-md rounded-[24px] p-6 shadow-lg transition-all hover:shadow-xl border border-border/50 hover:border-primary/20"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
-              whileHover={{ scale: 1.005 }}
+              className="bg-card/80 backdrop-blur-md rounded-[24px] p-6 shadow-lg transition-all border border-border/50"
+              initial={{ opacity: 0, y: 40 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+              whileHover={{
+                y: -3,
+                boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.15)",
+                borderColor: "rgba(49, 130, 246, 0.3)"
+              }}
             >
               <div className="flex items-center gap-2 mb-4">
                 <div className="bg-primary/10 p-2 rounded-full">
@@ -675,11 +691,11 @@ export default function Home() {
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm, remarkBreaks]}
                           components={{
-                            strong: ({ node, ...props }) => <span className="font-bold text-primary" {...props} />,
-                            p: ({ node, ...props }) => <p className="mb-4 last:mb-0 text-[16px] leading-8 text-foreground/90 break-keep" {...props} />,
-                            ul: ({ node, ...props }) => <ul className="space-y-2 mb-4" {...props} />,
-                            li: ({ node, ...props }) => <li className="flex gap-2 text-[16px] leading-8 text-foreground/90 break-keep" {...props} />,
-                            a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 font-bold hover:underline underline-offset-4" {...props} target="_blank" rel="noopener noreferrer" />,
+                            strong: ({ node, ...props }) => <strong className="font-bold text-primary inline" {...props} />,
+                            p: ({ node, ...props }) => <p className="mb-4 last:mb-0 text-[15px] leading-7 text-foreground/90" {...props} />,
+                            ul: ({ node, ...props }) => <ul className="space-y-2 mb-4 list-disc pl-5" {...props} />,
+                            li: ({ node, ...props }) => <li className="text-[15px] leading-7 text-foreground/90" {...props} />,
+                            a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 font-bold hover:underline underline-offset-4 inline" {...props} target="_blank" rel="noopener noreferrer" />,
                             h1: ({ node, ...props }) => <h3 className="text-xl font-bold text-foreground mb-3 mt-6" {...props} />,
                             h2: ({ node, ...props }) => <h4 className="text-lg font-bold text-foreground mb-2 mt-4" {...props} />,
                             h3: ({ node, ...props }) => <h5 className="text-base font-bold text-foreground mb-2 mt-3" {...props} />,
@@ -725,7 +741,7 @@ export default function Home() {
                       <div className="flex flex-col gap-5">
                         {/* Category Tabs & Search Bar */}
                         <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                          <div className="flex flex-wrap gap-1 p-1 bg-muted/30 rounded-full border border-border/40 backdrop-blur-sm">
+                          <div className="flex flex-wrap gap-1 p-1.5 bg-muted/60 dark:bg-muted/40 rounded-full border border-border/60 dark:border-border/40 backdrop-blur-sm shadow-sm">
                             {['ALL', 'Academic', 'Scholarship', 'General', 'Employment', 'News'].map((cat) => (
                               <button
                                 key={cat}
@@ -935,12 +951,12 @@ export default function Home() {
                             className="overflow-hidden mb-2"
                           >
                             <div className={`grid gap-4 ${layout === 'grid' ? "md:grid-cols-2" : "flex flex-col"}`}>
-                              {pinnedNotices.map((notice) => (
+                              {pinnedNotices.map((notice, i) => (
                                 <div key={notice.id} className="relative">
                                   <div className="absolute top-3 right-3 z-10">
                                     <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[9px] font-bold border border-primary/20 backdrop-blur-sm">고정</span>
                                   </div>
-                                  <NoticeCard notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} />
+                                  <NoticeCard notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i} />
                                 </div>
                               ))}
                             </div>
@@ -953,8 +969,8 @@ export default function Home() {
                         className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}
                       >
                         <AnimatePresence mode='popLayout'>
-                          {regularNotices.slice(0, visibleCount).map((notice) => (
-                            <NoticeCard key={notice.id} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} />
+                          {regularNotices.slice(0, visibleCount).map((notice, i) => (
+                            <NoticeCard key={notice.id} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i % 12} />
                           ))}
                         </AnimatePresence>
                       </div>
@@ -992,6 +1008,9 @@ export default function Home() {
 
           {/* Notice Detail Dialog */}
           <NoticeDialog notice={selectedNotice} isOpen={isDialogOpen} onClose={() => setIsDialogOpen(false)} />
+
+          {/* AI Mascot */}
+          <Mascot message={briefing ? undefined : "AI 브리핑을 불러오고 있어요..."} />
         </main>
       </div>
     </div >

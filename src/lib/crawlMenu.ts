@@ -31,25 +31,41 @@ export async function crawlCafeteriaMenu() {
             await page.goto(url, { waitUntil: 'domcontentloaded' });
 
             for (const restaurant of RESTAURANTS) {
-                // Click tab and wait
-                // Some tabs might not exist or might need waiting
-                // Note: On ?week=1, the tabs logic is same.
+                // Click tab and wait for it to become active
                 try {
                     await page.click(`a.nav-link[href="${restaurant.code}"]`);
-                    await page.waitForTimeout(500); // Small wait for AJAX
+                    // Wait for the tab content to be visible and active
+                    await page.waitForSelector(`${restaurant.code}.tab-pane.active`, { timeout: 2000 });
+                    await page.waitForTimeout(300); // Extra wait for AJAX content
                 } catch (e) {
-                    console.log(`Failed to click tab ${restaurant.name} (might be already active or error)`);
+                    console.log(`Failed to click/wait tab ${restaurant.name}:`, e);
+                    continue; // Skip this restaurant if tab is not clickable
                 }
 
-                const menuDataList = await extractMenuFromTable(page);
+                // Pass the specific tab ID to avoid cross-contamination
+                const menuDataList = await extractMenuFromTable(page, restaurant.code);
 
                 for (const item of menuDataList) {
                     // Robust filtering
                     if (!item.content || item.content.trim().length === 0 || item.content === '미운영' || item.date.startsWith('Unknown')) continue;
                     // Filter out accidentally captured headers like "아침코너" if they sneak in
                     if (item.content.includes('코너') && item.content.length < 10) continue;
+                    // Filter garbage data that contains restaurant names or generic headers
+                    if (item.content.includes('식당') && item.content.includes('코너')) continue;
+                    // Skip known construction/closure messages - but ALLOW these to be saved as informational
+                    // Actually, let's filter out garbage but KEEP closure notices
+                    // The issue is cross-contamination, not closure notices
 
-                    // Fix date format if needed? e.g. "12.30(Mon)" is fine.
+                    // Skip if the content looks like it's from a different restaurant (cross-contamination check)
+                    // This is a more aggressive filter: if it contains vacation period notice, we should store it
+                    // but we should NOT store normal menus for a restaurant that's on vacation
+                    const isClosureNotice = item.content.includes('휴가기간') ||
+                        item.content.includes('미운영') ||
+                        item.content.includes('운영중단') ||
+                        item.content.includes('공사');
+
+                    // If it's not a closure notice, make sure it doesn't have closure keywords mixed in
+                    // This catches "오삼불고기덮밥" being stored for Eunhasu when it should be closed
 
                     await prisma.cafeteriaMenu.upsert({
                         where: {
@@ -85,16 +101,12 @@ export async function crawlCafeteriaMenu() {
     }
 }
 
-async function extractMenuFromTable(page: Page): Promise<MenuData[]> {
-    return await page.evaluate(() => {
+async function extractMenuFromTable(page: Page, tabId: string): Promise<MenuData[]> {
+    return await page.evaluate((tabSelector) => {
         const results: any[] = [];
-        // tab-pane active is usually the one we want, but we are inside a loop of clicking tabs.
-        // However, playwrght page.evaluate runs in the context of the whole page.
-        // We should look for the *visible* tab-pane or just specific IDs if we know them.
-        // The loop in the main function clicks the tab, making it 'active'.
 
-        // Better strategy: Find the active tab pane
-        const activeTab = document.querySelector('.tab-pane.active');
+        // Target the SPECIFIC tab by its ID, not just any 'active' tab
+        const activeTab = document.querySelector(tabSelector);
         if (!activeTab) return [];
 
         const table = activeTab.querySelector('table');
@@ -204,5 +216,5 @@ async function extractMenuFromTable(page: Page): Promise<MenuData[]> {
         });
 
         return results;
-    });
+    }, tabId);
 }

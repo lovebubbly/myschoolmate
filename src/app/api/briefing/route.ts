@@ -40,7 +40,7 @@ export async function GET() {
 
         // 3. Generate New
         const notices = await prisma.notice.findMany({
-            orderBy: { id: 'desc' },
+            orderBy: { date: 'desc' },  // Sort by date, not ID (crawler order may differ)
             take: 30 // Look at more notices
         });
 

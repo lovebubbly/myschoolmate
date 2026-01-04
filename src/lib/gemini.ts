@@ -50,9 +50,16 @@ function extractByRegex(title: string, body: string) {
 }
 
 export async function getAIBriefing(notices: any[], userProfile: string) {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error('Missing GEMINI_API_KEY environment variable');
+
+    const genAI = new GoogleGenerativeAI(apiKey);
     // gemini-2.5-flash-lite: stable, cost-effective, 1M context
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+
+    // Parse user profile for pre-filtering
+    const incomeMatch = userProfile.match(/(\d+)구간/);
+    const userIncome = incomeMatch ? parseInt(incomeMatch[1]) : 5;
 
     const hour = parseInt(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Seoul' }));
     let timeContext = "Daytime";
@@ -60,10 +67,25 @@ export async function getAIBriefing(notices: any[], userProfile: string) {
     else if (hour >= 18 && hour < 22) timeContext = "Evening";
     else if (hour >= 22 || hour < 5) timeContext = "Late Night";
 
+    // Pre-filter notices based on user profile (reduce token costs)
+    let filteredNotices = notices;
+
+    // Income 9-10: High income users - filter out need-based scholarships
+    if (userIncome >= 9) {
+        filteredNotices = notices.filter(n => {
+            const title = (n.title || '').toLowerCase();
+            const summary = (n.summary || '').toLowerCase();
+            const text = title + ' ' + summary;
+            // Filter out obvious need-based keywords
+            const needBasedKeywords = ['기초생활', '차상위', '기초수급', '저소득'];
+            return !needBasedKeywords.some(kw => text.includes(kw));
+        });
+    }
+
     // Sort by date (newest first) and take recent ones
-    const recentNotices = notices
+    const recentNotices = filteredNotices
         .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
-        .slice(0, 20);
+        .slice(0, 15);  // Reduced from 20 to 15 for token efficiency
 
     // Include title, summary, link, and date for better AI judgment
     const noticeData = recentNotices.map(n => ({
@@ -155,7 +177,10 @@ export async function analyzeNotice(title: string, body: string): Promise<{
     // 1. Regex Extraction (Cost-free, high precision for format)
     const regexData = extractByRegex(title, body);
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error('Missing GEMINI_API_KEY environment variable');
+
+    const genAI = new GoogleGenerativeAI(apiKey);
     // gemini-2.5-flash-lite for structured extraction
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite', generationConfig: { responseMimeType: "application/json" } });
 
@@ -227,7 +252,10 @@ export async function analyzeNotice(title: string, body: string): Promise<{
 export async function formatNoticeContent(rawContent: string): Promise<string> {
     if (!rawContent || rawContent.length < 50) return rawContent;
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error('Missing GEMINI_API_KEY environment variable');
+
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
     const prompt = `You are a content formatter. Convert the following raw Korean notice text into clean, well-structured Markdown.
@@ -238,14 +266,17 @@ export async function formatNoticeContent(rawContent: string): Promise<string> {
    - Ensure every row has the same number of columns as the header
    - Ensure EVERY cell has a value (use "-" if empty)
    - Escape pipe characters (|) within cell content as \\|
-   - IMPORTANT: If a cell contains multiple lines, flatten them into a single line or use <br> tags. Markdown tables DO NOT support multi-line rows.
+   - IMPORTANT: If a cell contains multiple lines, flatten them into a single line or use <br> tags
+   - **CRITICAL**: If a table has MORE than 6 columns, simplify it by:
+     a) Keep only the most essential columns (e.g., 분야, 인원, 자격조건, 비고)
+     b) Add a note: "※ 상세 내용은 첨부파일을 확인해주세요."
 3. Use bullet lists (- or *) for list items
 4. Use **bold** for important dates, deadlines, and key terms
 5. Add proper line breaks between sections
 6. Format links as [text](url) if URLs are present
 7. Clean up excessive whitespace but keep logical paragraph breaks
 8. Keep the language in Korean - do not translate
-9. If there's a schedule/timeline, format it as a table
+9. If there's a schedule/timeline, format it as a table (max 5 columns)
 10. Escape tildes (~) used for ranges to prevent strikethrough (e.g., 10시\\~17시)
 11. Output ONLY the formatted markdown, no explanations
 

@@ -50,3 +50,16 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Editor
+*.swp
+*.swo
+
+# Local Test/Debug
+test_output.txt
+debug_page.html
+debug_screenshot.png
+test-crawl.ts
+test-crawler.ts
+check-duplicates.ts
+cleanup-duplicates.ts

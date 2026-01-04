@@ -31,19 +31,21 @@ export async function GET() {
 export async function POST(req: Request) {
     try {
         const body = await req.json();
-        const { grade, income, trackId } = body;
+        const { grade, income, gpa, trackId } = body;
 
         const profile = await prisma.userProfile.upsert({
             where: { id: USER_ID },
             update: {
                 grade: parseInt(grade),
                 income: parseInt(income),
+                gpa: gpa !== undefined ? parseFloat(gpa) : undefined,
                 trackId: trackId ? parseInt(trackId) : null
             },
             create: {
                 id: USER_ID,
                 grade: parseInt(grade),
                 income: parseInt(income),
+                gpa: gpa !== undefined ? parseFloat(gpa) : 0.0,
                 trackId: trackId ? parseInt(trackId) : null
             }
         });

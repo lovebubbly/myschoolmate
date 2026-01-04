@@ -5,8 +5,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, ArrowRight, Calendar, Sparkles, SlidersHorizontal, Map, Settings as SettingsIcon, LayoutGrid, List } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { LoadingOverlay, ButtonLoader } from '@/components/LoadingOverlay';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 import {
   Dialog,
@@ -35,81 +36,116 @@ interface Notice {
 }
 
 function NoticeCard({ notice, filterProfile, onOpen }: { notice: Notice, filterProfile: any, onOpen: (n: Notice) => void }) {
+  // Helper for translating categories/types
+  const translateType = (type: string) => {
+    const map: Record<string, string> = {
+      'Tuition': '등록금',
+      'LivingSupport': '생활비',
+      'Scholarship': '장학',
+      'Job': '취업연계',
+      'Program': '프로그램',
+      'Event': '행사',
+      'Other': '기타',
+      'Academic': '학사',
+      'Employment': '취업',
+      'General': '일반',
+      'News': '소식'
+    };
+    return map[type] || type;
+  };
+
   return (
-    <Card className="group overflow-hidden bg-card/80 backdrop-blur-sm border-border hover:border-primary/30 shadow-sm hover:shadow-lg transition-all rounded-[20px] cursor-pointer" onClick={() => onOpen(notice)}>
-      <div className="p-5 flex flex-col gap-3 h-full">
-        <div className="flex justify-between items-start">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-2 py-1 rounded bg-muted text-muted-foreground text-[10px] font-bold uppercase transition-colors group-hover:bg-muted/80">
-              {(() => {
-                const cat = notice.category;
-                if (cat === 'Academic') return '학사';
-                if (cat === 'Scholarship') return '장학';
-                if (cat === 'Employment') return '취업';
-                if (cat === 'General') return '일반';
-                if (cat === 'Event') return '행사';
-                if (cat === 'Tuition') return '등록금';
-                if (cat === 'News') return '소식';
-                if (cat === 'Program') return '비교과';
-                if (cat.includes('Academic')) return '학사';
-                if (cat.includes('Scholarship')) return '장학';
-                if (cat.includes('Employment')) return '취업';
-                return cat;
-              })()}
-            </span>
+    <motion.div
+      layout
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.2 }}
+    >
+      <Card
+        className="group relative overflow-hidden bg-card hover:bg-muted/50 border-border/60 hover:border-primary/20 shadow-sm hover:shadow-md transition-all duration-300 rounded-[24px] cursor-pointer h-full"
+        onClick={() => onOpen(notice)}
+      >
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
 
-            {notice.scholarshipType && notice.scholarshipType !== 'Other' && (
-              <span className="px-2 py-1 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 text-[10px] font-bold">
-                {notice.scholarshipType}
+        <div className="p-5 flex flex-col gap-4 h-full">
+          <div className="flex justify-between items-start gap-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Category Badge - Minimal */}
+              <span className="px-2.5 py-1 rounded-[10px] bg-muted/50 text-muted-foreground border border-border/50 text-[11px] font-semibold transition-colors group-hover:text-foreground group-hover:border-primary/10">
+                {(() => {
+                  const cat = notice.category;
+                  // Handle combined or specific categories
+                  if (cat.includes('Academic')) return '학사';
+                  if (cat.includes('Scholarship')) return '장학';
+                  if (cat.includes('Employment')) return '취업';
+                  if (cat.includes('Tuition')) return '등록금';
+                  return translateType(cat);
+                })()}
+              </span>
+
+              {/* Special Tags - Outline Style */}
+              {notice.scholarshipType && notice.scholarshipType !== 'Other' && (
+                <span className="px-2.5 py-1 rounded-[10px] bg-blue-500/[0.05] text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/50 text-[11px] font-medium">
+                  {translateType(notice.scholarshipType)}
+                </span>
+              )}
+              {filterProfile.grade > 0 && notice.minGrade && filterProfile.grade >= notice.minGrade && (
+                <span className="flex items-center gap-1 px-2.5 py-1 rounded-[10px] bg-green-500/[0.05] text-green-600 dark:text-green-400 border border-green-200/50 dark:border-green-800/50 text-[11px] font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500/60 animate-pulse" />
+                  학년 매칭
+                </span>
+              )}
+            </div>
+            <span className="text-xs text-muted-foreground/60 font-medium shrink-0 tracking-tight">{notice.date}</span>
+          </div>
+
+          <h3 className="font-bold text-[17px] leading-snug text-foreground/90 group-hover:text-primary transition-colors tracking-tight">
+            {notice.title}
+          </h3>
+
+          {/* AI Summary Section - Cleaner Look + Gradient Restored */}
+          {notice.summary && (
+            <div className="text-sm font-medium text-foreground/90 leading-relaxed bg-muted/30 p-4 rounded-2xl border border-border/40 group-hover:border-primary/10 transition-colors">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Sparkles className="w-4 h-4 text-purple-500" />
+                <span className="text-xs font-extrabold bg-gradient-to-r from-blue-600 via-purple-600 to-red-500 bg-clip-text text-transparent">
+                  AI 요약
+                </span>
+              </div>
+              <span className="block line-clamp-2 md:line-clamp-3">
+                {notice.summary}
+              </span>
+            </div>
+          )}
+
+          {/* Bottom Tags - Unified Minimal Style */}
+          <div className="mt-auto pt-3 flex flex-wrap gap-2">
+            {notice.deadline && (
+              <span className="flex items-center gap-1.5 text-[11px] font-medium text-rose-600 dark:text-rose-400 bg-rose-500/[0.05] px-2.5 py-1 rounded-lg border border-rose-200/50 dark:border-rose-900/30">
+                <Calendar className="w-3 h-3 opacity-70" />
+                <span>~{notice.deadline}</span>
               </span>
             )}
-            {filterProfile.grade > 0 && notice.minGrade && filterProfile.grade >= notice.minGrade && (
-              <span className="px-2 py-1 rounded bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 text-[10px] font-bold border border-green-200 dark:border-green-800">
-                ✅ 학년 매칭
+            {notice.minGrade && (
+              <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
+                최소 {notice.minGrade}학년
+              </span>
+            )}
+            {notice.maxIncome !== null && (
+              <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
+                소득 {notice.maxIncome}구간↓
+              </span>
+            )}
+            {notice.minGpa && (
+              <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
+                학점 {notice.minGpa}↑
               </span>
             )}
           </div>
-          <span className="text-xs text-muted-foreground font-medium shrink-0">{notice.date}</span>
         </div>
-
-        <h3 className="font-bold text-[17px] leading-snug text-foreground group-hover:text-primary transition-colors">
-          {notice.title}
-        </h3>
-
-        {/* Summary */}
-        {notice.summary && (
-          <div className="text-sm text-muted-foreground leading-relaxed bg-muted/40 p-4 rounded-xl border border-border/60">
-            <span className="font-extrabold bg-gradient-to-r from-blue-600 via-purple-600 to-red-500 bg-clip-text text-transparent mr-1.5">
-              AI 요약
-            </span>
-            {notice.summary}
-          </div>
-        )}
-
-        <div className="mt-auto pt-2 flex flex-wrap gap-2">
-          {notice.deadline && (
-            <span className="flex items-center gap-1 text-xs font-bold text-red-800 bg-red-200 dark:bg-red-900/40 dark:text-red-200 px-2 py-1 rounded">
-              <Calendar className="w-3 h-3" /> ~{notice.deadline}
-            </span>
-          )}
-          {notice.minGrade && (
-            <span className="text-[11px] font-bold text-orange-800 bg-orange-200 dark:bg-orange-900/40 dark:text-orange-200 px-2 py-1 rounded">
-              최소 {notice.minGrade}학년
-            </span>
-          )}
-          {notice.maxIncome !== null && (
-            <span className="text-[11px] font-bold text-green-800 bg-green-200 dark:bg-green-900/40 dark:text-green-200 px-2 py-1 rounded">
-              소득 {notice.maxIncome}구간↓
-            </span>
-          )}
-          {notice.minGpa && (
-            <span className="text-[11px] font-bold text-purple-800 bg-purple-200 dark:bg-purple-900/40 dark:text-purple-200 px-2 py-1 rounded">
-              학점 {notice.minGpa}↑
-            </span>
-          )}
-        </div>
-      </div>
-    </Card>
+      </Card>
+    </motion.div>
   );
 }
 
@@ -140,7 +176,10 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
           {notice.summary && (
             <div className="bg-primary/5 rounded-2xl p-5 border border-primary/10">
               <h4 className="text-sm font-bold text-primary mb-2 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4" /> AI 요약 브리핑
+                <Sparkles className="w-4 h-4" />
+                <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-red-500 bg-clip-text text-transparent">
+                  AI 요약 브리핑
+                </span>
               </h4>
               <p className="text-[15px] leading-relaxed text-foreground/90">
                 {notice.summary}
@@ -150,6 +189,7 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
 
           <div className="text-foreground/80 leading-8 text-[15px] prose dark:prose-invert max-w-none">
             <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
               components={{
                 strong: ({ node, ...props }) => <span className="font-bold text-primary" {...props} />,
                 p: ({ node, ...props }) => <p className="mb-4 last:mb-0" {...props} />,
@@ -160,9 +200,9 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
                     <table className="min-w-full divide-y divide-border text-sm" {...props} />
                   </div>
                 ),
-                thead: ({ node, ...props }) => <thead className="bg-muted/50" {...props} />,
-                th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground" {...props} />,
-                td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground" {...props} />,
+                thead: ({ node, ...props }) => <thead className="bg-muted/50 border-b border-border" {...props} />,
+                th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0" {...props} />,
+                td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0" {...props} />,
                 a: ({ node, ...props }) => <a className="text-primary font-bold hover:underline underline-offset-4 break-all" {...props} target="_blank" />,
               }}
             >
@@ -201,7 +241,7 @@ export default function Home() {
 
   // Filters
   const [showFilters, setShowFilters] = useState(false);
-  const [filterProfile, setFilterProfile] = useState<{ grade: number; income: number; gpa: number }>({ grade: 0, income: 10, gpa: 0 });
+  const [filterProfile, setFilterProfile] = useState<{ grade: number; income: number; gpa: number }>({ grade: 0, income: 11, gpa: 0 }); // Default income 11 (All)
   const [loadedProfile, setLoadedProfile] = useState<any>(null);
 
   useEffect(() => {
@@ -326,7 +366,10 @@ export default function Home() {
 
       // 3. User Profile Filters
       if (n.minGrade && filterProfile.grade > 0 && filterProfile.grade < n.minGrade) return false;
-      if (n.maxIncome !== null && n.maxIncome !== undefined && filterProfile.income !== 10) {
+      if (n.maxIncome !== null && n.maxIncome !== undefined && filterProfile.income !== 11) {
+        // If user selected a specific bracket (0-10), filter out any notices that require a stricter bracket than the user has.
+        // e.g. User is 9. Notice requires 8 (maxIncome=8). 9 > 8 -> Hide.
+        // e.g. User is 3. Notice requires 5. 3 <= 5 -> Show.
         if (filterProfile.income > n.maxIncome) return false;
       }
       if (filterProfile.gpa && n.minGpa && filterProfile.gpa < n.minGpa) return false;
@@ -407,21 +450,26 @@ export default function Home() {
             <div className="flex flex-col gap-5">
               {/* Category Tabs & Search Bar */}
               <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-1 p-1 bg-muted/30 rounded-full border border-border/40 backdrop-blur-sm">
                   {['ALL', 'Academic', 'Scholarship', 'General', 'Employment', 'News'].map((cat) => (
-                    <Button
+                    <button
                       key={cat}
-                      variant={selectedCategory === cat ? 'default' : 'outline'}
-                      size="sm"
                       onClick={() => setSelectedCategory(cat)}
-                      className={`rounded-full px-4 ${selectedCategory === cat ? 'bg-primary text-primary-foreground' : 'bg-background hover:bg-muted'}`}
+                      className={`relative px-4 py-2 rounded-full text-sm font-bold transition-colors z-10 ${selectedCategory === cat ? 'text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
                     >
+                      {selectedCategory === cat && (
+                        <motion.span
+                          layoutId="activeTab"
+                          className="absolute inset-0 bg-primary rounded-full -z-10 shadow-md"
+                          transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                        />
+                      )}
                       {cat === 'ALL' ? '전체' :
                         cat === 'Academic' ? '학사' :
                           cat === 'Scholarship' ? '장학' :
                             cat === 'General' ? '일반' :
                               cat === 'Employment' ? '취업' : '뉴스'}
-                    </Button>
+                    </button>
                   ))}
                 </div>
 
@@ -439,16 +487,40 @@ export default function Home() {
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 px-1">
                 <div className="flex items-center gap-2">
                   <h2 className="text-xl font-bold">공지사항</h2>
-                  <span className="bg-muted text-muted-foreground text-xs px-2 py-1 rounded-md font-medium">{filteredNotices.length}건</span>
+                  <motion.div
+                    layout
+                    className="flex items-center gap-1.5 bg-muted/50 px-3 py-1.5 rounded-xl border border-border/50"
+                  >
+                    <span className="text-xs text-muted-foreground font-medium">
+                      {filteredNotices.length !== notices.length ? (
+                        <>
+                          전체 <span className="text-muted-foreground">{notices.length}</span>건 중
+                          <motion.span
+                            key={filteredNotices.length}
+                            initial={{ y: 5, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            className="ml-1 text-primary font-bold text-sm"
+                          >
+                            {filteredNotices.length}건
+                          </motion.span>
+                          {' '}필터링됨
+                        </>
+                      ) : (
+                        <>
+                          총 <span className="font-bold text-foreground">{notices.length}</span>건
+                        </>
+                      )}
+                    </span>
+                  </motion.div>
                 </div>
 
                 <div className="flex gap-2 flex-wrap">
-                  <div className="bg-muted p-1 rounded-xl flex gap-1 border border-border">
+                  <div className="bg-muted p-1 rounded-full flex gap-1 border border-border">
                     <Button
                       variant={layout === 'grid' ? 'default' : 'ghost'}
                       size="sm"
                       onClick={() => setLayout('grid')}
-                      className="rounded-lg h-8 px-3"
+                      className="rounded-full h-8 px-4"
                     >
                       <LayoutGrid className="w-4 h-4 mr-1.5" />
                       카드
@@ -457,7 +529,7 @@ export default function Home() {
                       variant={layout === 'list' ? 'default' : 'ghost'}
                       size="sm"
                       onClick={() => setLayout('list')}
-                      className="rounded-lg h-8 px-3"
+                      className="rounded-full h-8 px-4"
                     >
                       <List className="w-4 h-4 mr-1.5" />
                       리스트
@@ -490,20 +562,30 @@ export default function Home() {
               <div className="bg-card p-5 rounded-[20px] shadow-sm space-y-4 animate-in fade-in slide-in-from-top-2 border border-border">
                 <div className="flex justify-between items-center">
                   <h3 className="text-sm font-bold">상세 필터</h3>
-                  {loadedProfile && (
+                  <div className="flex items-center gap-2">
+                    {loadedProfile && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setFilterProfile({
+                          grade: loadedProfile.grade,
+                          income: loadedProfile.income,
+                          gpa: loadedProfile.gpa || 0
+                        })}
+                        className="text-xs h-7"
+                      >
+                        내 정보 적용
+                      </Button>
+                    )}
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      onClick={() => setFilterProfile({
-                        grade: loadedProfile.grade,
-                        income: loadedProfile.income,
-                        gpa: loadedProfile.gpa || 0
-                      })}
-                      className="text-xs h-7"
+                      onClick={() => setFilterProfile({ grade: 0, income: 11, gpa: 0 })}
+                      className="text-xs h-7 hover:bg-muted text-muted-foreground hover:text-foreground"
                     >
-                      내 정보 적용
+                      전체 보기
                     </Button>
-                  )}
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="space-y-2">
@@ -521,16 +603,23 @@ export default function Home() {
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-semibold text-muted-foreground">소득분위 (이하)</label>
+                    <label className="text-xs font-semibold text-muted-foreground">내 소득분위</label>
                     <select
                       className="w-full bg-muted/50 p-3 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 border border-transparent focus:border-primary/50"
                       value={filterProfile.income}
                       onChange={(e) => setFilterProfile({ ...filterProfile, income: Number(e.target.value) })}
                     >
-                      <option value={10}>전체 (제한없음)</option>
+                      <option value={11}>전체 보기 (필터 끄기)</option>
+                      <option value={10}>10구간</option>
+                      <option value={9}>9구간</option>
                       <option value={8}>8구간</option>
+                      <option value={7}>7구간</option>
                       <option value={6}>6구간</option>
+                      <option value={5}>5구간</option>
+                      <option value={4}>4구간</option>
                       <option value={3}>3구간</option>
+                      <option value={2}>2구간</option>
+                      <option value={1}>1구간</option>
                       <option value={0}>기초/차상위</option>
                     </select>
                   </div>
@@ -549,11 +638,16 @@ export default function Home() {
               </div>
             )}
 
-            <div className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}>
-              {filteredNotices.map((notice, idx) => (
-                <NoticeCard key={idx} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} />
-              ))}
-            </div>
+            <motion.div
+              layout
+              className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}
+            >
+              <AnimatePresence mode='popLayout'>
+                {filteredNotices.map((notice) => (
+                  <NoticeCard key={notice.id} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} />
+                ))}
+              </AnimatePresence>
+            </motion.div>
           </section>
 
           {/* Notice Detail Dialog */}

@@ -29,10 +29,17 @@ export function NavBar() {
         >
             <div className="flex items-center gap-2">
                 <Link href="/" className="hover:opacity-80 transition-opacity">
+                    {/* Mobile Logo (Shield) */}
+                    <img
+                        src="/mobile-logo.png"
+                        alt="충북대학교"
+                        className="h-9 w-auto md:hidden block object-contain"
+                    />
+                    {/* Desktop Logo (Full Text) */}
                     <img
                         src="https://inform.chungbuk.ac.kr/layouts/INFORM/img/logo_d.png"
                         alt="충북대학교 정보통신공학부"
-                        className="h-8 w-auto brightness-0 dark:brightness-100 dark:invert-0"
+                        className="h-8 w-auto hidden md:block brightness-0 dark:brightness-100 dark:invert-0"
                     />
                 </Link>
             </div>

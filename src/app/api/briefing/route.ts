@@ -42,7 +42,7 @@ export async function GET() {
             take: 30 // Look at more notices
         });
 
-        const profileStr = `Grade: ${profile.grade}, Income Decile: ${profile.income}, Track ID: ${profile.trackId || 'None'}`;
+        const profileStr = `학년: ${profile.grade}학년, 소득분위: ${profile.income}구간, GPA: ${profile.gpa || '미입력'}, 트랙: ${profile.trackId || '미선택'}`;
         const briefing = await getAIBriefing(notices, profileStr);
 
         // 4. Save Cache

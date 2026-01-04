@@ -61,7 +61,7 @@ export default function Settings() {
     };
 
     return (
-        <div className="min-h-screen bg-background p-4 md:p-8 font-sans text-foreground flex flex-col items-center justify-center">
+        <div className="min-h-screen bg-background p-4 md:p-8 pt-[120px] md:pt-[120px] font-sans text-foreground flex flex-col items-center">
             <main className="w-full max-w-md space-y-6">
                 <header className="flex items-center gap-4">
                     <Button variant="ghost" size="icon" onClick={() => window.location.href = '/'} className="-ml-2">
@@ -92,7 +92,8 @@ export default function Settings() {
                             value={income}
                             onChange={(e) => setIncome(e.target.value)}
                         >
-                            <option value="10">9~10구간 (해당없음)</option>
+                            <option value="10">10구간</option>
+                            <option value="9">9구간</option>
                             <option value="8">8구간</option>
                             <option value="7">7구간</option>
                             <option value="6">6구간</option>
@@ -165,6 +166,10 @@ export default function Settings() {
                     >
                         {saving ? '저장 중...' : '저장하기'}
                     </Button>
+                    <p className="text-center text-xs text-muted-foreground mt-4 leading-relaxed bg-muted/30 p-3 rounded-xl">
+                        🔒 입력하신 정보는 <b>현재 브라우저</b>에 안전하게 저장되어 재방문 시에도 유지되며, <b>공지사항 필터링</b> 목적으로만 사용됩니다.<br />
+                        (단, AI 브리핑 생성을 위해 익명화된 정보가 Gemini 서버로 전송될 수 있습니다)
+                    </p>
                 </Card>
             </main>
         </div>

@@ -13,6 +13,7 @@ export interface NoticeData {
     maxIncome?: number | null;
     scholarshipType?: string;
     applicationDeadline?: string | null;
+    minGpa?: number | null;
     body?: string;
 }
 
@@ -114,7 +115,9 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                                 }
                             });
                             tableMd += '\n';
-                            const placeholder = document.createTextNode(tableMd);
+                            // Use div with br tags to ensure innerText preserves newlines
+                            const placeholder = document.createElement('div');
+                            placeholder.innerHTML = tableMd.replace(/\n/g, '<br>');
                             table.parentNode?.replaceChild(placeholder, table);
                         });
 
@@ -155,6 +158,7 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                             summary: analysis.summary,
                             minGrade: noticeData.minGrade,
                             maxIncome: noticeData.maxIncome,
+                            minGpa: noticeData.minGpa,
                             scholarshipType: noticeData.scholarshipType,
                             deadline: noticeData.applicationDeadline,
                             processed: true
@@ -168,6 +172,7 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                             summary: analysis.summary,
                             minGrade: noticeData.minGrade,
                             maxIncome: noticeData.maxIncome,
+                            minGpa: noticeData.minGpa,
                             scholarshipType: noticeData.scholarshipType,
                             deadline: noticeData.applicationDeadline,
                             processed: true

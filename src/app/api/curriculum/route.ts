@@ -1,17 +1,17 @@
-
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import curriculum from '@/lib/curriculum.json';
 
 export async function GET() {
     try {
-        const tracks = await prisma.track.findMany({
-            include: {
-                courses: true
-            }
-        });
+        // curriculum.json에서 트랙 정보 읽기
+        const tracksData = (curriculum as any).tracks;
 
-        // Also fetch all courses for a "General" view or if track is unselected
-        // But simplified, just return tracks.
+        const tracks = Object.entries(tracksData).map(([id, track]: [string, any], index) => ({
+            id: index + 1,
+            key: id,
+            name: track.name,
+            required: track.required
+        }));
 
         return NextResponse.json({ success: true, tracks });
     } catch (e) {

@@ -15,6 +15,7 @@ export interface NoticeData {
     applicationDeadline?: string | null;
     minGpa?: number | null;
     body?: string;
+    isPinned: boolean;
 }
 
 const BOARDS = [
@@ -84,6 +85,8 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                         const title = linkEl.textContent?.trim() || '';
                         const href = linkEl.getAttribute('href');
                         const date = dateEl?.textContent?.trim() || '';
+                        const firstTd = row.querySelector('td');
+                        const firstTdText = firstTd ? firstTd.innerText.trim() : '';
 
                         if (!href) return null;
 
@@ -93,10 +96,14 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                         // But we remove [공지] text below.
                         // Let's just grab them all; the "processed" check handles duplicates efficiently.
 
+
+                        const isPinned = row.classList.contains('notice') || firstTdText === '공지';
+
                         return {
                             title: title.replace(/^\[공지\]\s*/, ''),
                             url: href.startsWith('http') ? href : `https://inform.chungbuk.ac.kr${href}`,
-                            date
+                            date,
+                            isPinned
                         };
                     }).filter(l => l !== null);
                 });
@@ -141,6 +148,13 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                     });
 
                     if (existing && existing.processed) {
+                        // Update isPinned status even if already processed
+                        if (existing.isPinned !== link.isPinned) {
+                            await prisma.notice.update({
+                                where: { id: existing.id },
+                                data: { isPinned: link.isPinned }
+                            });
+                        }
                         console.log(`Skipping existing: ${link.title}`);
                         continue;
                     }
@@ -196,6 +210,7 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                             category: board.name,
                             date: link.date,
                             body: bodyContent?.slice(0, 10000),
+                            isPinned: link.isPinned,
                             ...analysis
                         };
 
@@ -216,7 +231,8 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                                 minGpa: noticeData.minGpa,
                                 scholarshipType: noticeData.scholarshipType,
                                 deadline: noticeData.applicationDeadline,
-                                processed: true
+                                processed: true,
+                                isPinned: link.isPinned
                             },
                             create: {
                                 title: noticeData.title,
@@ -230,7 +246,8 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                                 minGpa: noticeData.minGpa,
                                 scholarshipType: noticeData.scholarshipType,
                                 deadline: noticeData.applicationDeadline,
-                                processed: true
+                                processed: true,
+                                isPinned: link.isPinned
                             }
                         });
 

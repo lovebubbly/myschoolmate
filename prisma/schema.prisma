@@ -26,6 +26,7 @@ model Notice {
   deadline  String?
   
   processed Boolean  @default(false) // If processed by Gemini/AI
+  isPinned  Boolean  @default(false) // If it's a pinned notice at the top
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

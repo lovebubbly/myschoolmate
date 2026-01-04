@@ -97,31 +97,36 @@ ${JSON.stringify(noticeData, null, 2)}
         -   **Income 9~10**: High income. **NOT** eligible for need-based aid. Do NOT suggest need-based scholarships.
     -   **GPA**: 4.5 scale.
 
+6.  **STRICT Grounding & Truthfulness**:
+    -   ONLY use the provided notice data. Do NOT invent notices or mix details between different notices.
+    -   Ensure the mapping between Title, Summary, and URL is 100% accurate.
+    -   If you mention a specific notice, the details must match the JSON data provided above.
+
 Generate a briefing that:
 1.  **[Important] Select Top 3 Notices**: Analyze applicability.
     -   If user is Income 9-10, prioritize Career/Internship/Events over Scholarships.
 2.  Friendly, "Nudge" tone.
-3.  **Link Format Rules (CRITICAL)**:
-    -   **Titles MUST NOT contain square brackets `[` or `]`**.
-    -   **Replace ALL square brackets in titles with parentheses `(` and `)`**.
-        -   Bad: "(LIG Next1) Recruitment" <- "[LIG Next1] Recruitment"
-    -   **Format**: **1. EMOJI [Safe Title without brackets](URL)**
-    -   Do not show raw URLs at the end.
-4.  **Personalized Explanation**:
+4.  **Format Rules (STRICT)**:
+    -   **Link Style**: You MUST link the title directly. 
+        -   ✅ Correct: **1. 📢 [ [Source] Title ](https://...)**
+    -   **Brackets**: You CAN use square brackets ONLY for starting source labels like [CBNU] or [Department]. 
+    -   **Additional Info**: If you add any extra information at the bottom, format it clearly using bullet points and avoid redundant bolding.
+
+5.  **Personalized Explanation**:
     -   "Since your GPA is 3.5..."
     -   "As a 4th year student..."
-    -   (If Income 9-10): "Check out this internship for your career!" (Do NOT mention financial aid).
-5.  **Start** with your creative greeting.
+
+6.  **Start** with your creative greeting.
 
 Format Example:
 (Creative Greeting)
 
 Information for 2nd year student (Income 9)!
 
-**1. 📢 (LIG Nex1) Internship Recruitment**
+**1. 📢 [ [CBNU] (LIG Nex1) Internship Recruitment ](https://inform.chungbuk.ac.kr/...)**
 Great chance for your Embedded Track career!
 
-**2. 🏆 (CBNU) Capstone Design Fair**
+**2. 🏆 [ [Scholarship] Capstone Design Fair ](https://inform.chungbuk.ac.kr/...)**
 Show off your skills!
 
 Return ONLY the formatted markdown.
@@ -129,7 +134,10 @@ Return ONLY the formatted markdown.
 
     try {
         const result = await model.generateContent(prompt);
-        return result.response.text();
+        let text = result.response.text();
+        // Post-processing: Fix broken links (e.g. "[Title] (URL)" -> "[Title](URL)")
+        text = text.replace(/\] \(/g, '](');
+        return text;
     } catch (e) {
         console.error('Gemini Error:', e);
         return '현재 AI 브리핑을 생성할 수 없습니다.';
@@ -152,12 +160,14 @@ export async function analyzeNotice(title: string, body: string): Promise<{
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite', generationConfig: { responseMimeType: "application/json" } });
 
     const prompt = `
-    Analyze this notice and extract information.
+    Analyze this notice and extract information. 
+    STRICT Grounding: Use ONLY the provided Title and Body. Do NOT use outside knowledge.
+
     Title: ${title}
     Body: ${body.slice(0, 5000)}
 
     Task:
-    1. Summarize in Korean (1 sentence).
+    1. Summarize in Korean (1 sentence). The summary MUST be about this specific notice ONLY.
     2. Identify scholarship type (Tuition, LivingSupport, Program, Job, Other).
     3. Extract minGrade (1-4) and maxIncome (0-10) if mentioned.
     4. Extract deadline (YYYY.MM.DD).
@@ -226,7 +236,9 @@ export async function formatNoticeContent(rawContent: string): Promise<string> {
 1. Preserve ALL original information - do not summarize or remove content
 2. Format tables using proper Markdown table syntax (| header | header |)
    - Ensure every row has the same number of columns as the header
+   - Ensure EVERY cell has a value (use "-" if empty)
    - Escape pipe characters (|) within cell content as \\|
+   - IMPORTANT: If a cell contains multiple lines, flatten them into a single line or use <br> tags. Markdown tables DO NOT support multi-line rows.
 3. Use bullet lists (- or *) for list items
 4. Use **bold** for important dates, deadlines, and key terms
 5. Add proper line breaks between sections

@@ -7,8 +7,11 @@ import { NavBar } from "@/components/NavBar";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "MySchoolMate - CBNU Assistant",
-  description: "Academic assistant for CBNU ICE students",
+  title: "MySchoolMate | 충북대학교 정보통신공학부 AI 비서",
+  description: "충북대학교 정보통신공학부 학생들을 위한 스마트 AI 학사 비서 서비스입니다.",
+  icons: {
+    icon: "/icon.png",
+  },
 };
 
 import { ThemeProvider } from "@/components/ThemeProvider";

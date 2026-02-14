@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { resolveUserProfile } from '@/lib/userProfileResolver';
 import { applySessionCookieHeader } from '@/lib/sessionUser';
+import { ensurePlanningCatalogSeeded } from '@/lib/planningCatalogSeed';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,6 +72,7 @@ async function loadCompletion(userId: number): Promise<CompletionByTrack> {
 
 export async function GET(request: Request) {
     try {
+        await ensurePlanningCatalogSeeded();
         const session = await resolveUserProfile(request);
         const completionByTrack = await loadCompletion(session.userId);
 
@@ -88,6 +90,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        await ensurePlanningCatalogSeeded();
         const session = await resolveUserProfile(request);
         const body = await request.json();
 

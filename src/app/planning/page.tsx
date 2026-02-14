@@ -10,6 +10,7 @@ import Link from 'next/link';
 import type {
     PlanningCourse,
     PlanningRequirementPayload,
+    CategorySummary,
 } from '@/lib/planningRequirements';
 
 interface Profile {
@@ -47,7 +48,23 @@ interface TrackCompletionStore {
     [trackId: string]: string[];
 }
 
+type GradeCategory = PlanningCourse['categoryCode'];
+
+type ActiveTrackSummary = {
+    trackId: number;
+    trackKey: string;
+    trackName: string;
+    requiredCourseCount: number;
+    completedCourseCount: number;
+    courseCompletionRate: number;
+    missingRequiredCourseNames: string[];
+    requiredCourseIds: string[];
+    completionByCourseIds: string[];
+    categorySummaries: CategorySummary[];
+};
+
 const LEGACY_COMPLETION_STORAGE_KEY = 'myschoolmate-planning-completed-courses-v1';
+const CATEGORY_ORDER: GradeCategory[] = ['MAJOR_MANDATORY', 'MAJOR_ELECTIVE', 'GENERAL', 'CROSS', 'OTHER'];
 
 function toUniqueCourseIds(values: unknown): string[] {
     if (!Array.isArray(values)) return [];
@@ -100,6 +117,103 @@ function formatCategoryLabel(categoryCode: string): string {
     }
 }
 
+function buildCategorySummariesForProgress(
+    courses: PlanningCourse[],
+    requiredCourseIds: string[],
+    completedCourseIds: string[],
+    previousSummaries: CategorySummary[],
+): CategorySummary[] {
+    const requiredSet = new Set(requiredCourseIds);
+    const completedSet = new Set(completedCourseIds);
+
+    const requiredByCategory: Record<GradeCategory, { requiredCredits: number; requiredCourseCount: number }> = {
+        MAJOR_MANDATORY: { requiredCredits: 0, requiredCourseCount: 0 },
+        MAJOR_ELECTIVE: { requiredCredits: 0, requiredCourseCount: 0 },
+        GENERAL: { requiredCredits: 0, requiredCourseCount: 0 },
+        CROSS: { requiredCredits: 0, requiredCourseCount: 0 },
+        OTHER: { requiredCredits: 0, requiredCourseCount: 0 },
+    };
+    const completedByCategory: Record<GradeCategory, number> = {
+        MAJOR_MANDATORY: 0,
+        MAJOR_ELECTIVE: 0,
+        GENERAL: 0,
+        CROSS: 0,
+        OTHER: 0,
+    };
+    const completedCourseCountByCategory: Record<GradeCategory, number> = {
+        MAJOR_MANDATORY: 0,
+        MAJOR_ELECTIVE: 0,
+        GENERAL: 0,
+        CROSS: 0,
+        OTHER: 0,
+    };
+
+    courses.forEach((course) => {
+        if (!requiredSet.has(course.id)) return;
+        const categoryCode = course.categoryCode;
+        requiredByCategory[categoryCode].requiredCourseCount += 1;
+        requiredByCategory[categoryCode].requiredCredits += course.creditPoints;
+        if (completedSet.has(course.id)) {
+            completedByCategory[categoryCode] += course.creditPoints;
+            completedCourseCountByCategory[categoryCode] += 1;
+        }
+    });
+
+    const explicitRequiredCredits = Object.fromEntries(
+        previousSummaries
+            .filter((summary) => summary.requiredCredits > 0)
+            .map((summary) => [summary.categoryCode, summary.requiredCredits]),
+    ) as Partial<Record<GradeCategory, number>>;
+
+    return CATEGORY_ORDER.map((categoryCode) => {
+        const requiredCreditsFromRule = explicitRequiredCredits[categoryCode] ?? 0;
+        const required = requiredCreditsFromRule > 0 ? requiredCreditsFromRule : requiredByCategory[categoryCode].requiredCredits;
+        const completedCredits = completedByCategory[categoryCode];
+        const completionRate = required > 0
+            ? Math.min(100, (completedCredits / required) * 100)
+            : requiredByCategory[categoryCode].requiredCourseCount > 0
+                ? 0
+                : 0;
+
+        return {
+            categoryCode,
+            categoryName: formatCategoryLabel(categoryCode),
+            requiredCredits: required,
+            completedCredits,
+            requiredCourseCount: requiredByCategory[categoryCode].requiredCourseCount,
+            completedCourseCount: completedCourseCountByCategory[categoryCode],
+            completionRate,
+        };
+    });
+}
+
+function buildActiveSummary(
+    requirement: PlanningRequirementPayload | null,
+    trackCourses: PlanningCourse[],
+    trackCompletionCourseIds: string[],
+): ActiveTrackSummary | null {
+    if (!requirement) return null;
+
+    const requiredCourseIds = requirement.track.requiredCourseIds;
+    const requiredCompletedCount = requiredCourseIds.filter((id) => trackCompletionCourseIds.includes(id)).length;
+    const requiredCount = requirement.track.requiredCourseCount || 0;
+    const categorySummaries = buildCategorySummariesForProgress(
+        trackCourses,
+        requiredCourseIds,
+        trackCompletionCourseIds,
+        requirement.track.categorySummaries,
+    );
+    const courseCompletionRate = requiredCount > 0 ? Math.round((requiredCompletedCount / requiredCount) * 100) : 0;
+
+    return {
+        ...requirement.track,
+        completionByCourseIds: trackCompletionCourseIds,
+        completedCourseCount: requiredCompletedCount,
+        courseCompletionRate,
+        categorySummaries,
+    };
+}
+
 function resolveAcademicYear(profile: Profile): number {
     const yearFromCohort = profile.cohortYear;
     if (yearFromCohort) return yearFromCohort;
@@ -137,7 +251,11 @@ export default function Planning() {
         return completed.filter((courseId) => validSet.has(courseId));
     }, [requirement, trackCompletionMap, trackCourses]);
 
-    const completionRate = requirement?.track.courseCompletionRate ?? 0;
+    const activeSummary = useMemo(
+        () => buildActiveSummary(requirement, trackCourses, trackCompletionCourseIds),
+        [requirement, trackCourses, trackCompletionCourseIds],
+    );
+    const completionRate = activeSummary?.courseCompletionRate ?? 0;
 
     const syncTrackCompletion = useCallback(async (payload: ProgressSavePayload, options?: { silent?: boolean }) => {
         try {
@@ -289,28 +407,6 @@ export default function Planning() {
             };
         });
 
-        if (requirement) {
-            setRequirement((prev) => {
-                if (!prev) return prev;
-
-                const completedRequiredCount = prev.track.requiredCourseIds.filter((id) => nextCourseIds.includes(id)).length;
-                const requiredCount = prev.track.requiredCourseCount || 0;
-                const courseCompletionRate = requiredCount > 0
-                    ? Math.round((completedRequiredCount / requiredCount) * 100)
-                    : 0;
-
-                return {
-                    ...prev,
-                    track: {
-                        ...prev.track,
-                        completionByCourseIds: nextCourseIds,
-                        completedCourseCount: completedRequiredCount,
-                        courseCompletionRate,
-                    },
-                };
-            });
-        }
-
         void syncTrackCompletion({ trackId: profile.trackId, completedCourseIds: nextCourseIds });
     };
 
@@ -322,19 +418,6 @@ export default function Planning() {
             ...prev,
             [key]: [],
         }));
-
-        setRequirement((prev) => (prev
-            ? {
-                ...prev,
-                track: {
-                    ...prev.track,
-                    completionByCourseIds: [],
-                    completedCourseCount: 0,
-                    courseCompletionRate: 0,
-                },
-            }
-            : prev
-        ));
 
         void syncTrackCompletion({ trackId: profile.trackId, completedCourseIds: [] });
     };
@@ -382,7 +465,7 @@ export default function Planning() {
                             <h2 className="text-lg opacity-80 font-medium mb-1">나의 트랙</h2>
                             <h1 className="text-3xl font-bold">{currentTrack.name}</h1>
                             <p className="mt-4 opacity-90 text-sm leading-relaxed">
-                                필수 과목 {requirement?.track.requiredCourseCount ?? currentTrack.requiredCourseCount}개 /
+                                필수 과목 {activeSummary?.requiredCourseCount ?? currentTrack.requiredCourseCount}개 /
                                 {' '}매핑 {trackCourses.length}개 / 완료 {trackCompletionCourseIds.length}개
                                 {requirement ? ` (기준 학번: ${requirement.academicYear}, 과목 기준: ${requirement.sourceYear})` : ` (기준 연도: ${currentTrack.sourceYear})`}
                             </p>
@@ -417,9 +500,9 @@ export default function Planning() {
 
                         <Card className="p-5 rounded-[20px] bg-white border border-gray-200">
                             <p className="font-bold text-sm mb-3">카테고리별 학점 충족률</p>
-                            {requirement?.track.categorySummaries?.length ? (
+                            {activeSummary?.categorySummaries?.length ? (
                                 <div className="space-y-3">
-                                    {requirement.track.categorySummaries
+                                    {activeSummary.categorySummaries
                                         .filter((summary) => summary.requiredCourseCount > 0 || summary.requiredCredits > 0)
                                         .map((summary) => {
                                             const completedRate = Math.round(summary.completionRate);
@@ -441,16 +524,16 @@ export default function Planning() {
                             )}
                         </Card>
 
-                        {requirement && requirement.track.missingRequiredCourseNames.length > 0 ? (
-                            <Card className="p-5 rounded-[20px] bg-amber-50 border-amber-200 text-amber-900">
-                                <p className="font-bold text-sm mb-2">
-                                    누락된 필수 과목 {requirement.track.missingRequiredCourseNames.length}개
-                                </p>
-                                <ul className="list-disc pl-5 text-xs leading-relaxed space-y-1">
-                                    {requirement.track.missingRequiredCourseNames.map((name) => (
-                                        <li key={name}>{name}</li>
-                                    ))}
-                                </ul>
+                        {activeSummary && activeSummary.missingRequiredCourseNames.length > 0 ? (
+                                <Card className="p-5 rounded-[20px] bg-amber-50 border-amber-200 text-amber-900">
+                                    <p className="font-bold text-sm mb-2">
+                                        누락된 필수 과목 {activeSummary.missingRequiredCourseNames.length}개
+                                    </p>
+                                    <ul className="list-disc pl-5 text-xs leading-relaxed space-y-1">
+                                        {activeSummary.missingRequiredCourseNames.map((name) => (
+                                            <li key={name}>{name}</li>
+                                        ))}
+                                    </ul>
                             </Card>
                         ) : (
                             <Card className="p-5 rounded-[20px] border border-emerald-200 text-emerald-900 bg-emerald-50">

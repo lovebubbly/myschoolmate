@@ -4,6 +4,7 @@ import {
     applySessionCookieHeader,
 } from '@/lib/sessionUser';
 import { resolveUserProfile } from '@/lib/userProfileResolver';
+import { ensurePlanningCatalogSeeded } from '@/lib/planningCatalogSeed';
 
 export const dynamic = 'force-dynamic';
 
@@ -190,6 +191,7 @@ function withParsedDashboardState(profile: UserProfile) {
 
 export async function GET(request: Request) {
     try {
+        await ensurePlanningCatalogSeeded();
         const session = await resolveUserProfile(request);
         const response = NextResponse.json({
             success: true,
@@ -206,6 +208,7 @@ export async function GET(request: Request) {
 
 export async function POST(req: Request) {
     try {
+        await ensurePlanningCatalogSeeded();
         const session = await resolveUserProfile(req);
         const body = await req.json().catch(() => ({}));
 

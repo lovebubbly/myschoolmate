@@ -12,15 +12,12 @@ import { CafeteriaWidget } from '@/components/CafeteriaWidget';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { GripVertical, Layout, Eye, EyeOff, ChevronUp, ChevronDown } from 'lucide-react';
 import { Mascot } from '@/components/Mascot';
-import { AIAnalyzingLoader } from '@/components/LottieAnimations';
 
 import {
   Dialog,
   DialogContent,
   DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogClose
+  DialogTitle
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Search, X } from "lucide-react";
@@ -201,19 +198,30 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
   return (
     <motion.div
       data-testid="notice-card"
-      layout
-      initial={{ opacity: 0, y: 30, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -8, scale: 0.95 }}
+      layout="position"
+      initial={{ opacity: 0, y: 28, scale: 0.96, filter: 'blur(2px)' }}
+      animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
+      exit={{ opacity: 0, y: -10, scale: 0.96, filter: 'blur(2px)' }}
       transition={{
-        duration: 0.35,
         delay: index * 0.05,
-        ease: [0.22, 1, 0.36, 1]
+        type: 'spring',
+        stiffness: 320,
+        damping: 26
       }}
       whileHover={{
-        y: -4,
-        transition: { duration: 0.2 }
+        y: -8,
+        scale: 1.025,
+        transition: { type: 'spring', stiffness: 320, damping: 24 }
       }}
+      whileFocus={{
+        y: -8,
+        scale: 1.025,
+        transition: { type: 'spring', stiffness: 320, damping: 24 }
+      }}
+      whileTap={{
+        scale: 0.985
+      }}
+      layoutId={`notice-card-${notice.id}`}
       className="h-full"
     >
       <button
@@ -223,7 +231,7 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
         className="w-full h-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 rounded-[24px]"
       >
       <Card
-        className="group relative overflow-hidden bg-card hover:bg-muted/30 border-border/60 hover:border-primary/30 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 rounded-[24px] cursor-pointer h-full min-h-[220px]"
+        className="group relative overflow-hidden bg-card hover:bg-muted/30 border-border/60 hover:border-primary/30 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 rounded-[24px] cursor-pointer h-full min-h-[220px] will-change-transform"
       >
           <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
 
@@ -305,7 +313,6 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
           </div>
         </Card>
       </button>
-      </Card>
     </motion.div>
   );
 }
@@ -328,7 +335,14 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
               {notice.title}
             </DialogTitle>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full hover:bg-muted -mt-1 -mr-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="rounded-full hover:bg-muted -mt-1 -mr-1"
+            aria-label="공지 상세 닫기"
+          >
             <X className="w-5 h-5" />
           </Button>
         </div>
@@ -365,7 +379,18 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
                   thead: ({ node, ...props }) => <thead className="bg-muted/50 border-b border-border" {...props} />,
                   th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap bg-muted/10 min-w-[120px]" {...props} />,
                   td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[120px] whitespace-pre-wrap break-words leading-normal align-top text-xs md:text-[13px]" {...props} />,
-                  a: ({ node, ...props }) => <a className="text-primary font-bold hover:underline underline-offset-4 break-all" {...props} target="_blank" />,
+                  a: ({ node, ...props }) => {
+                    const href = props.href as string | undefined;
+                    return (
+                      <a
+                        className="text-primary font-bold hover:underline underline-offset-4 break-all"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={href ? `외부 링크: ${href}` : '새 탭에서 열기'}
+                        {...props}
+                      />
+                    );
+                  },
                   h1: ({ node, ...props }) => <h1 className="text-2xl font-bold mb-4 mt-8 text-foreground" {...props} />,
                   h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-6 text-foreground border-b border-border pb-2" {...props} />,
                   h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-2 mt-4 text-foreground" {...props} />,
@@ -376,10 +401,27 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
             </div>
 
             <div className="grid grid-cols-2 gap-4 mt-8 pb-4">
-              <Button variant="outline" className="h-12 rounded-xl font-bold" onClick={() => window.open(notice.url, '_blank')}>
-                원문 보러가기 <ArrowRight className="w-4 h-4 ml-2" />
+              <Button
+                type="button"
+                asChild
+                variant="outline"
+                className="h-12 rounded-xl font-bold"
+              >
+                <a
+                  href={notice.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`공지 원문 새 탭 열기: ${notice.title}`}
+                >
+                  원문 보러가기 <ArrowRight className="w-4 h-4 ml-2" />
+                </a>
               </Button>
-              <Button className="h-12 rounded-xl font-bold bg-primary text-primary-foreground" onClick={onClose}>
+              <Button
+                type="button"
+                className="h-12 rounded-xl font-bold bg-primary text-primary-foreground"
+                onClick={onClose}
+                aria-label="공지 상세 닫기"
+              >
                 닫기
               </Button>
             </div>
@@ -667,7 +709,7 @@ export default function Home() {
   };
 
   // Filter & Search Logic
-  const filteredNotices = notices
+  const filteredNotices = [...notices]
     .sort((a, b) => (a.date < b.date ? 1 : -1))
     .filter(n => {
       // 1. Search Query
@@ -776,8 +818,8 @@ export default function Home() {
   const autoCrawlerStatusText = toCrawlerStatusText(autoCrawlerStatus);
 
   return (
-    <div className="min-h-screen font-sans bg-[url('/background.png')] bg-cover bg-center bg-fixed text-foreground">
-      <div className="min-h-screen bg-background/60 backdrop-blur-[20px] p-4 md:p-8 transition-colors duration-500" style={{ paddingTop: '120px' }}>
+    <div className="min-h-screen font-sans bg-[url('/background.png')] bg-cover bg-center md:bg-fixed text-foreground">
+      <div className="min-h-screen bg-background/60 backdrop-blur-[20px] p-4 md:p-8 pt-20 md:pt-28 transition-colors duration-500">
         <main className="max-w-4xl mx-auto space-y-8 pb-12">
 
           {/* Header */}
@@ -809,11 +851,25 @@ export default function Home() {
                 >
                   <Layout className="w-5 h-5" />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => window.location.href = '/planning'} className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform">
-                  <MapIcon className="w-5 h-5" />
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform"
+                >
+                  <Link href="/planning" aria-label="커리큘럼 페이지로 이동">
+                    <MapIcon className="w-5 h-5" />
+                  </Link>
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => window.location.href = '/settings'} className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform">
-                  <SettingsIcon className="w-5 h-5" />
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform"
+                >
+                  <Link href="/settings" aria-label="설정 페이지로 이동">
+                    <SettingsIcon className="w-5 h-5" />
+                  </Link>
                 </Button>
               </div>
             </div>
@@ -1034,7 +1090,18 @@ export default function Home() {
                             p: ({ node, ...props }) => <p className="mb-4 last:mb-0 text-[15px] leading-7 text-foreground/90" {...props} />,
                             ul: ({ node, ...props }) => <ul className="space-y-2 mb-4 list-disc pl-5" {...props} />,
                             li: ({ node, ...props }) => <li className="text-[15px] leading-7 text-foreground/90" {...props} />,
-                            a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 font-bold hover:underline underline-offset-4 inline" {...props} target="_blank" rel="noopener noreferrer" />,
+                            a: ({ node, ...props }) => {
+                              const href = props.href as string | undefined;
+                              return (
+                                <a
+                                  className="text-blue-600 dark:text-blue-400 font-bold hover:underline underline-offset-4 inline"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  aria-label={href ? `외부 링크: ${href}` : '새 탭에서 열기'}
+                                  {...props}
+                                />
+                              );
+                            },
                             h1: ({ node, ...props }) => <h3 className="text-xl font-bold text-foreground mb-3 mt-6" {...props} />,
                             h2: ({ node, ...props }) => <h4 className="text-lg font-bold text-foreground mb-2 mt-4" {...props} />,
                             h3: ({ node, ...props }) => <h5 className="text-base font-bold text-foreground mb-2 mt-3" {...props} />,
@@ -1360,9 +1427,9 @@ export default function Home() {
 
                       <AnimatePresence mode='popLayout'>
                         {pinnedNotices.length > 0 && isPinnedExpanded && (
-                        <motion.div
-                          data-testid="pinned-notices-expanded"
-                          key="pinned-notices"
+                          <motion.div
+                            data-testid="pinned-notices-expanded"
+                            key="pinned-notices"
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
@@ -1375,7 +1442,7 @@ export default function Home() {
                                   <div className="absolute top-3 right-3 z-10">
                                     <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[9px] font-bold border border-primary/20 backdrop-blur-sm">고정</span>
                                   </div>
-                                  <NoticeCard key={`${notice.id}-${layout}`} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i} />
+                                  <NoticeCard key={notice.id} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i} />
                                 </div>
                               ))}
                             </div>
@@ -1384,21 +1451,24 @@ export default function Home() {
                         )}
                       </AnimatePresence>
 
-                      <AnimatePresence mode='wait' initial={false}>
-                    <motion.div
-                          data-testid={`regular-notices-${layout}`}
-                          key={`regular-notices-${layout}`}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -8 }}
-                          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                          className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}
-                        >
+                      <motion.div
+                        layout
+                        transition={{ layout: { type: 'spring', stiffness: 300, damping: 28 } }}
+                        data-testid={`regular-notices-${layout}`}
+                        className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}
+                      >
+                        <AnimatePresence mode="popLayout" initial={false}>
                           {regularNotices.slice(0, visibleCount).map((notice, i) => (
-                            <NoticeCard key={`${notice.id}-${layout}`} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i % 12} />
+                              <NoticeCard
+                              key={notice.id}
+                              notice={notice}
+                              filterProfile={filterProfile}
+                              onOpen={handleOpenNotice}
+                              index={i % 12}
+                            />
                           ))}
-                        </motion.div>
-                      </AnimatePresence>
+                        </AnimatePresence>
+                      </motion.div>
 
                       {/* Load More Button */}
                       {visibleCount < regularNotices.length && (

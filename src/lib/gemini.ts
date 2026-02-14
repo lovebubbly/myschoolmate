@@ -1,6 +1,7 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { extractApplicationDeadlineFromText } from '@/lib/deadlineExtractor';
+import { ALLOWED_TAGS, extractTagsByRegex, normalizeTags } from '@/lib/tagging';
 
 // Time-aware greeting helper
 function getTimeGreeting(): { greeting: string; emoji: string } {
@@ -42,6 +43,37 @@ function extractByRegex(title: string, body: string) {
     const minGpa = gpaMatch ? parseFloat(gpaMatch[1]) : null;
 
     return { maxIncome, minGrade, applicationDeadline, minGpa };
+}
+
+async function inferTagsWithAI(title: string, body: string): Promise<string[]> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return [];
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash-lite',
+        generationConfig: { responseMimeType: "application/json" }
+    });
+
+    const prompt = `
+You are tagging a Korean university notice.
+Pick 1-4 tags ONLY from this list: ${ALLOWED_TAGS.join(', ')}.
+Use only the provided Title and Body.
+Return JSON: { "tags": ["..."] }
+
+Title: ${title}
+Body: ${body.slice(0, 1500)}
+`;
+
+    try {
+        const result = await model.generateContent(prompt);
+        const data = JSON.parse(result.response.text());
+        const tags = Array.isArray(data?.tags) ? data.tags : [];
+        return normalizeTags(tags.map(String));
+    } catch (e) {
+        console.error('Tag inference error:', e);
+        return [];
+    }
 }
 
 export async function getAIBriefing(notices: any[], userProfile: string) {
@@ -161,16 +193,18 @@ Return ONLY the formatted markdown.
     }
 }
 
-export async function analyzeNotice(title: string, body: string): Promise<{
+export async function analyzeNotice(title: string, body: string, category?: string | null): Promise<{
     summary: string;
     minGrade: number | null;
     maxIncome: number | null;
     scholarshipType: string;
     applicationDeadline: string | null;
     minGpa?: number | null;
+    tags: string[];
 }> {
     // 1. Regex Extraction (Cost-free, high precision for format)
     const regexData = extractByRegex(title, body);
+    const regexTags = extractTagsByRegex({ title, body, category });
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('Missing GEMINI_API_KEY environment variable');
@@ -199,6 +233,7 @@ export async function analyzeNotice(title: string, body: string): Promise<{
     try {
         const result = await model.generateContent(prompt);
         const aiData = JSON.parse(result.response.text());
+        const inferredTags = regexTags.length > 0 ? regexTags : await inferTagsWithAI(title, body);
 
         return {
             summary: aiData.summary || "요약 없음",
@@ -223,7 +258,8 @@ export async function analyzeNotice(title: string, body: string): Promise<{
                 const num = parseFloat(String(val));
                 if (isNaN(num) || num > 10) return null; // Filter out "87" etc.
                 return num;
-            })()
+            })(),
+            tags: normalizeTags(inferredTags)
         };
 
     } catch (e) {
@@ -235,7 +271,8 @@ export async function analyzeNotice(title: string, body: string): Promise<{
             maxIncome: regexData.maxIncome,
             scholarshipType: "Other",
             applicationDeadline: regexData.applicationDeadline,
-            minGpa: regexData.minGpa
+            minGpa: regexData.minGpa,
+            tags: regexTags
         };
     }
 }

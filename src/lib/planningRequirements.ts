@@ -45,6 +45,28 @@ export type CategorySummary = {
     completionRate: number;
 };
 
+export type CategoryRequirementCheck = {
+    categoryCode: GradeCategory;
+    categoryName: string;
+    requiredCredits: number;
+    completedCredits: number;
+    requiredCourseCount: number;
+    completedCourseCount: number;
+    required: boolean;
+    satisfied: boolean;
+    missingCredits: number;
+};
+
+export type TrackRequirementStatus = {
+    requiredCoursesSatisfied: boolean;
+    categoryRequirementsSatisfied: boolean;
+    overallSatisfied: boolean;
+    requiredCourseCount: number;
+    completedCourseCount: number;
+    missingRequiredCourseNamesCount: number;
+    categoryChecks: CategoryRequirementCheck[];
+};
+
 export type TrackRequirementSummary = {
     trackId: number;
     trackKey: string;
@@ -56,6 +78,7 @@ export type TrackRequirementSummary = {
     requiredCourseIds: string[];
     completionByCourseIds: string[];
     categorySummaries: CategorySummary[];
+    requirementStatus: TrackRequirementStatus;
 };
 
 export type PlanningRequirementPayload = {
@@ -460,6 +483,95 @@ function mapRequiredCourses(requiredCourseNames: string[], allCourses: PlanningC
     return { requiredCourseIds, requiredCourses, missingRequiredCourseNames };
 }
 
+function normalizeCategoryRule(rawRequirements: Partial<Record<GradeCategory, number>>): Partial<Record<GradeCategory, number>> {
+    const normalized: Partial<Record<GradeCategory, number>> = {};
+
+    Object.entries(rawRequirements).forEach(([rawCode, rawValue]) => {
+        const code = rawCode as GradeCategory;
+        const value = toInt(rawValue);
+        if (!value || value <= 0) return;
+        normalized[code] = value;
+    });
+
+    return normalized;
+}
+
+function resolveCategoryRequirements(
+    rawRequirements: Partial<Record<GradeCategory, number>>,
+    requiredCourseIds: string[],
+    catalogCourses: PlanningCourse[],
+): Partial<Record<GradeCategory, number>> {
+    const explicitRequirements = normalizeCategoryRule(rawRequirements);
+    if (Object.keys(explicitRequirements).length > 0) {
+        return explicitRequirements;
+    }
+
+    const derived: Partial<Record<GradeCategory, number>> = {};
+    const courseById = new Map<string, PlanningCourse>(catalogCourses.map((course) => [course.id, course]));
+
+    requiredCourseIds.forEach((courseId) => {
+        const course = courseById.get(courseId);
+        if (!course) return;
+        const categoryCode = course.categoryCode;
+        derived[categoryCode] = (derived[categoryCode] ?? 0) + Math.max(0, course.creditPoints);
+    });
+
+    return derived;
+}
+
+function buildCategoryRequirementChecks(
+    categorySummaries: CategorySummary[],
+    explicitRequirements: Partial<Record<GradeCategory, number>>,
+): CategoryRequirementCheck[] {
+    const explicitByCategory = explicitRequirements;
+    return categorySummaries.map((summary) => {
+        const explicitRequiredCredits = explicitByCategory[summary.categoryCode];
+        const requiredCredits = explicitRequiredCredits ?? summary.requiredCredits;
+        const requiredCourseCount = summary.requiredCourseCount;
+        const completedCourseCount = summary.completedCourseCount;
+        const required = requiredCredits > 0 || requiredCourseCount > 0;
+        const completedCredits = summary.completedCredits;
+        const satisfied = !required
+            ? true
+            : completedCredits >= requiredCredits;
+        const missingCredits = required ? Math.max(0, requiredCredits - completedCredits) : 0;
+
+        return {
+            categoryCode: summary.categoryCode,
+            categoryName: summary.categoryName,
+            requiredCredits,
+            completedCredits,
+            requiredCourseCount,
+            completedCourseCount,
+            required,
+            satisfied,
+            missingCredits,
+        };
+    });
+}
+
+function buildRequirementStatus(
+    requiredCourseCount: number,
+    completedCourseCount: number,
+    missingRequiredCourseNames: string[],
+    categorySummaries: CategorySummary[],
+    explicitRequirements: Partial<Record<GradeCategory, number>>,
+): TrackRequirementStatus {
+    const categoryChecks = buildCategoryRequirementChecks(categorySummaries, explicitRequirements);
+    const requiredCoursesSatisfied = completedCourseCount >= requiredCourseCount && missingRequiredCourseNames.length === 0;
+    const categoryRequirementsSatisfied = categoryChecks.every((check) => check.satisfied);
+
+    return {
+        requiredCoursesSatisfied,
+        categoryRequirementsSatisfied,
+        overallSatisfied: requiredCoursesSatisfied && categoryRequirementsSatisfied,
+        requiredCourseCount,
+        completedCourseCount,
+        missingRequiredCourseNamesCount: missingRequiredCourseNames.length,
+        categoryChecks,
+    };
+}
+
 function buildCategorySummaries(
     courses: PlanningCourse[],
     requiredCourseIds: string[],
@@ -541,15 +653,24 @@ export function resolveCurriculumYearRange(): { min: number; max: number; years:
 export function getCurriculumCatalogSnapshot(): CurriculumCatalogSnapshot {
     const root = curriculumRaw as JsonObject;
     const tracks = parseLegacyTracks(root);
+    const availableYears = getCatalogSourceYears(root);
     const versions = parseVersions(root).map((version) => ({
         academicYear: version.academicYear,
         label: version.label,
         source: version.sourceYear,
         isActive: version.isActive,
         trackRequirements: Object.entries(version.trackRequirements).reduce((acc, [trackKey, trackRequirement]) => {
+            const versionSourceYear = resolveCatalogYear(root, version.sourceYear, availableYears);
+            const catalogCourses = extractCourses(root[versionSourceYear], versionSourceYear);
+            const { requiredCourseIds } = mapRequiredCourses(trackRequirement.requiredCourses, catalogCourses);
+            const resolvedCategoryRequirements = resolveCategoryRequirements(
+                trackRequirement.categoryRequirements,
+                requiredCourseIds,
+                catalogCourses,
+            );
             acc[trackKey] = {
                 requiredCourses: dedupeOrdered(trackRequirement.requiredCourses),
-                categoryRequirements: { ...trackRequirement.categoryRequirements },
+                categoryRequirements: resolvedCategoryRequirements,
             };
             return acc;
         }, {} as Record<string, { requiredCourses: string[]; categoryRequirements: Partial<Record<GradeCategory, number>> }>),
@@ -601,12 +722,29 @@ export function buildPlanForTrack(
     const requiredCourseNames = dedupeOrdered(trackReq.requiredCourses);
     const { requiredCourseIds, requiredCourses, missingRequiredCourseNames } = mapRequiredCourses(requiredCourseNames, catalogCourses);
     const requiredCourseCount = requiredCourseNames.length;
+    const resolvedCategoryRequirements = resolveCategoryRequirements(
+        trackReq.categoryRequirements,
+        requiredCourseIds,
+        catalogCourses,
+    );
 
     const completionByCourseIds = Array.from(new Set(options.completedCourseIds ?? [])).filter((id) => id);
     const completionSet = new Set(completionByCourseIds);
     const requiredCompleted = requiredCourseIds.filter((id) => completionSet.has(id));
-    const categorySummaries = buildCategorySummaries(catalogCourses, requiredCourseIds, completionByCourseIds, trackReq.categoryRequirements);
+    const categorySummaries = buildCategorySummaries(
+        catalogCourses,
+        requiredCourseIds,
+        completionByCourseIds,
+        resolvedCategoryRequirements,
+    );
     const completionRate = requiredCourseCount > 0 ? (requiredCompleted.length / requiredCourseCount) * 100 : 0;
+    const requirementStatus = buildRequirementStatus(
+        requiredCourseCount,
+        requiredCompleted.length,
+        missingRequiredCourseNames,
+        categorySummaries,
+        trackReq.categoryRequirements,
+    );
 
     const track = tracks[targetTrackKey];
     const resolvedTrackId = getTrackIdByKey(options.trackIdByKey)[targetTrackKey] || trackId;
@@ -632,6 +770,7 @@ export function buildPlanForTrack(
             requiredCourseIds,
             completionByCourseIds,
             categorySummaries,
+            requirementStatus,
         },
         courses,
     };

@@ -8,9 +8,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { ArrowLeft, RotateCcw } from 'lucide-react';
 import Link from 'next/link';
 import type {
+    CategorySummary,
     PlanningCourse,
     PlanningRequirementPayload,
-    CategorySummary,
+    CategoryRequirementCheck,
+    TrackRequirementStatus,
 } from '@/lib/planningRequirements';
 
 interface Profile {
@@ -61,6 +63,7 @@ type ActiveTrackSummary = {
     requiredCourseIds: string[];
     completionByCourseIds: string[];
     categorySummaries: CategorySummary[];
+    requirementStatus: TrackRequirementStatus;
 };
 
 const LEGACY_COMPLETION_STORAGE_KEY = 'myschoolmate-planning-completed-courses-v1';
@@ -187,6 +190,16 @@ function buildCategorySummariesForProgress(
     });
 }
 
+function requirementStatusPillClass(isSatisfied: boolean): string {
+    return isSatisfied
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+        : 'border-amber-200 bg-amber-50 text-amber-900';
+}
+
+function requirementStatusLabel(isSatisfied: boolean, doneLabel: string, todoLabel: string): string {
+    return isSatisfied ? doneLabel : todoLabel;
+}
+
 function buildActiveSummary(
     requirement: PlanningRequirementPayload | null,
     trackCourses: PlanningCourse[],
@@ -210,6 +223,7 @@ function buildActiveSummary(
         completionByCourseIds: trackCompletionCourseIds,
         completedCourseCount: requiredCompletedCount,
         courseCompletionRate,
+        requirementStatus: requirement.track.requirementStatus,
         categorySummaries,
     };
 }
@@ -243,9 +257,10 @@ export default function Planning() {
         if (!requirement) return [];
 
         const trackKey = String(requirement.track.trackId);
-        const completed = requirement.track.completionByCourseIds.length > 0
-            ? requirement.track.completionByCourseIds
-            : trackCompletionMap[trackKey] || [];
+        const hasLocalState = Object.prototype.hasOwnProperty.call(trackCompletionMap, trackKey);
+        const completed = hasLocalState
+            ? trackCompletionMap[trackKey] || []
+            : requirement.track.completionByCourseIds;
 
         const validSet = new Set(trackCourses.map((course) => course.id));
         return completed.filter((courseId) => validSet.has(courseId));
@@ -460,7 +475,7 @@ export default function Planning() {
                         </Button>
                     </Card>
                 ) : (
-                    <div className="space-y-6">
+                <div className="space-y-6">
                         <div className="bg-blue-600 text-white p-6 rounded-[24px] shadow-lg shadow-blue-200">
                             <h2 className="text-lg opacity-80 font-medium mb-1">나의 트랙</h2>
                             <h1 className="text-3xl font-bold">{currentTrack.name}</h1>
@@ -482,9 +497,25 @@ export default function Planning() {
                                 ) : saveError ? (
                                     <span className="text-amber-100">저장 실패: {saveError}</span>
                                 ) : (
-                                    <span className="text-emerald-100">계정 기반으로 진행 상태가 동기화됩니다.</span>
+                                <span className="text-emerald-100">계정 기반으로 진행 상태가 동기화됩니다.</span>
                                 )}
                             </div>
+                            {activeSummary?.requirementStatus ? (
+                                <div className="mt-4 space-y-2">
+                                    <p className="text-xs font-semibold">졸업 요건 상태</p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                                        <p className={`rounded-full border px-3 py-2 ${requirementStatusPillClass(activeSummary.requirementStatus.requiredCoursesSatisfied)}`}>
+                                            필수과목: {requirementStatusLabel(activeSummary.requirementStatus.requiredCoursesSatisfied, '충족', '미충족')}
+                                        </p>
+                                        <p className={`rounded-full border px-3 py-2 ${requirementStatusPillClass(activeSummary.requirementStatus.categoryRequirementsSatisfied)}`}>
+                                            카테고리 규칙: {requirementStatusLabel(activeSummary.requirementStatus.categoryRequirementsSatisfied, '충족', '미충족')}
+                                        </p>
+                                        <p className={`rounded-full border px-3 py-2 ${requirementStatusPillClass(activeSummary.requirementStatus.overallSatisfied)}`}>
+                                            전체 졸업요건: {requirementStatusLabel(activeSummary.requirementStatus.overallSatisfied, '충족', '미충족')}
+                                        </p>
+                                    </div>
+                                </div>
+                            ) : null}
                             <Button
                                 type="button"
                                 variant="secondary"
@@ -506,12 +537,27 @@ export default function Planning() {
                                         .filter((summary) => summary.requiredCourseCount > 0 || summary.requiredCredits > 0)
                                         .map((summary) => {
                                             const completedRate = Math.round(summary.completionRate);
+                                            const requirementCheck = activeSummary.requirementStatus?.categoryChecks?.find(
+                                                (check: CategoryRequirementCheck) => check.categoryCode === summary.categoryCode,
+                                            );
+                                            const checkLabel = requirementCheck?.required
+                                                ? requirementCheck.satisfied
+                                                    ? '요건 충족'
+                                                    : `${Math.max(0, requirementCheck.missingCredits)}학점 미달`
+                                                : '요건 미설정';
+                                            const checkClass = requirementCheck?.required
+                                                ? requirementCheck.satisfied
+                                                    ? 'text-emerald-600'
+                                                    : 'text-amber-600'
+                                                : 'text-gray-500';
+
                                             return (
                                                 <div key={summary.categoryCode} className="space-y-1">
                                                     <div className="flex justify-between items-center text-xs text-gray-700">
                                                         <span>{formatCategoryLabel(summary.categoryCode)} / {summary.completedCourseCount}/{summary.requiredCourseCount}</span>
-                                                        <span>
+                                                        <span className={checkClass}>
                                                             {summary.completedCredits} / {summary.requiredCredits}학점 ({completedRate}%)
+                                                            {` · ${checkLabel}`}
                                                         </span>
                                                     </div>
                                                     <Progress value={completedRate} className="h-2" />

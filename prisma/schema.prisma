@@ -28,6 +28,10 @@ model Notice {
   processed Boolean  @default(false) // If processed by Gemini/AI
   isPinned  Boolean  @default(false) // If it's a pinned notice at the top
   
+  
+  // Tags (N:M)
+  tags      NoticeTagOnNotice[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -110,6 +114,29 @@ model TrackCurriculumRequirement {
   track            Track             @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
   @@unique([curriculumVersionId, trackId])
+}
+
+model NoticeTag {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  notices   NoticeTagOnNotice[]
+}
+
+model NoticeTagOnNotice {
+  noticeId Int
+  tagId    Int
+  createdAt DateTime @default(now())
+
+  notice   Notice   @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  tag      NoticeTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([noticeId, tagId])
+  @@index([tagId])
+  @@index([noticeId])
 }
 
 model DailyBriefing {

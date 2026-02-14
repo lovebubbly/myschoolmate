@@ -36,6 +36,7 @@ interface Notice {
   deadline?: string | null;
   minGpa?: number | null;
   content?: string | null;
+  tags?: string[];
   isPinned: boolean;
 }
 
@@ -288,6 +289,14 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
 
             {/* Bottom Tags - Unified Minimal Style */}
             <div className="mt-auto pt-3 flex flex-wrap gap-2">
+              {(notice.tags || []).map((tag) => (
+                <span
+                  key={`${notice.id}-${tag}`}
+                  className="text-[11px] font-semibold text-muted-foreground/90 bg-muted/50 px-2.5 py-1 rounded-lg border border-border/50"
+                >
+                  #{tag}
+                </span>
+              ))}
               {notice.deadline && (
                 <span className="flex items-center gap-1.5 text-[11px] font-medium text-rose-600 dark:text-rose-400 bg-rose-500/[0.05] px-2.5 py-1 rounded-lg border border-rose-200/50 dark:border-rose-900/30">
                   <Calendar className="w-3 h-3 opacity-70" />
@@ -334,6 +343,18 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
             <DialogTitle className="text-xl font-extrabold leading-tight text-foreground">
               {notice.title}
             </DialogTitle>
+            {notice.tags && notice.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {notice.tags.map((tag) => (
+                  <span
+                    key={`${notice.id}-${tag}-dialog`}
+                    className="text-[11px] font-semibold text-muted-foreground/90 bg-muted/50 px-2.5 py-1 rounded-lg border border-border/50"
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <Button
             type="button"
@@ -460,6 +481,8 @@ export default function Home() {
 
   const [showFilters, setShowFilters] = useState(false);
   const [filterProfile, setFilterProfile] = useState<FilterProfile>({ grade: 0, income: 11, gpa: 0 }); // Default income 11 (All)
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagMode, setTagMode] = useState<'any' | 'all'>('any');
   const [loadedProfile, setLoadedProfile] = useState<LoadedProfile | null>(null);
 
   const [isPinnedExpanded, setIsPinnedExpanded] = useState(false);
@@ -512,7 +535,7 @@ export default function Home() {
   });
   const [isStyleDialogOpen, setIsStyleDialogOpen] = useState(false);
   const allowDashboardSyncRef = useRef(false);
-  const dashboardSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dashboardSyncTimerRef = useRef<number | null>(null);
 
   const syncDashboardState = async (nextState?: Partial<DashboardState>) => {
     if (!allowDashboardSyncRef.current) return;
@@ -677,7 +700,7 @@ export default function Home() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisibleCount(ITEMS_PER_PAGE);
-  }, [selectedCategory, searchQuery, filterProfile]);
+  }, [selectedCategory, searchQuery, filterProfile, selectedTags, tagMode]);
 
   async function refreshNotices() {
     setLoading(true);
@@ -764,6 +787,15 @@ export default function Home() {
       }
       if (filterProfile.gpa && n.minGpa && filterProfile.gpa < n.minGpa) return false;
 
+      if (selectedTags.length > 0) {
+        const noticeTags = n.tags || [];
+        if (tagMode === 'any') {
+          if (!selectedTags.some((tag) => noticeTags.includes(tag))) return false;
+        } else if (!selectedTags.every((tag) => noticeTags.includes(tag))) {
+          return false;
+        }
+      }
+
       return true;
     });
 
@@ -771,6 +803,10 @@ export default function Home() {
   const regularNotices = filteredNotices.filter(n => !n.isPinned);
   const noticeLookup = useMemo(() => new Map(notices.map((notice) => [notice.id, notice])), [notices]);
   const readNoticeSet = useMemo(() => new Set(readNoticeIds), [readNoticeIds]);
+  const availableTags = useMemo(() => {
+    const tags = notices.flatMap((notice) => notice.tags || []);
+    return Array.from(new Set(tags)).sort((a, b) => a.localeCompare(b, 'ko-KR'));
+  }, [notices]);
   const unreadNoticeCount = notices.filter((notice) => !readNoticeSet.has(notice.id)).length;
 
   const inboxItems = useMemo(() => {
@@ -1422,6 +1458,53 @@ export default function Home() {
                               />
                             </div>
                           </div>
+
+                          {availableTags.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-semibold text-muted-foreground">태그 필터</label>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTags([])}
+                                  className="text-xs text-muted-foreground hover:text-foreground"
+                                >
+                                  태그 초기화
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {availableTags.map((tag) => {
+                                  const isActive = selectedTags.includes(tag);
+                                  return (
+                                    <button
+                                      key={`tag-filter-${tag}`}
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedTags((prev) =>
+                                          prev.includes(tag)
+                                            ? prev.filter((item) => item !== tag)
+                                            : [...prev, tag]
+                                        )
+                                      }
+                                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${isActive ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted/50 text-muted-foreground border-border hover:text-foreground'}`}
+                                    >
+                                      #{tag}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                                <span>모드:</span>
+                                <select
+                                  className="bg-muted/50 rounded-full px-3 py-1 border border-border text-xs font-semibold"
+                                  value={tagMode}
+                                  onChange={(e) => setTagMode(e.target.value as 'any' | 'all')}
+                                >
+                                  <option value="any">하나라도 포함</option>
+                                  <option value="all">모두 포함</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 

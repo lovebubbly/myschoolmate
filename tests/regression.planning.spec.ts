@@ -12,6 +12,45 @@ type TrackApiItem = {
   courses: TrackApiCourse[];
 };
 
+type RequirementResponse = {
+  success: boolean;
+  track: {
+    requiredCourseCount: number;
+    requiredCoursesSatisfied?: boolean;
+    categoryRequirementsSatisfied?: boolean;
+    overallSatisfied?: boolean;
+    missingRequiredCourseNamesCount?: number;
+    categoryChecks?: Array<{
+      categoryCode?: string;
+      categoryName?: string;
+      requiredCredits: number;
+      completedCredits: number;
+      requiredCourseCount: number;
+      completedCourseCount: number;
+      required: boolean;
+      satisfied: boolean;
+      missingCredits: number;
+    }>;
+    requiredCourseCountByCategory?: Array<{
+      categoryCode?: string;
+      requiredCourseCount: number;
+      completedCourseCount: number;
+      completionRate: number;
+      requiredCredits: number;
+      completedCredits: number;
+    }>;
+    categorySummaries: Array<{
+      categoryCode: string;
+      requiredCourseCount: number;
+      completedCourseCount: number;
+      completionRate: number;
+      requiredCredits: number;
+      completedCredits: number;
+    }>;
+  };
+  completionByTrack: Record<string, string[]>;
+};
+
 async function selectActiveTrackAndResetProgress(request: APIRequestContext, baseUrl: string): Promise<TrackApiItem> {
   const curriculumRes = await request.get(`${baseUrl}/api/curriculum`);
   expect(curriculumRes.ok()).toBeTruthy();
@@ -116,7 +155,7 @@ test.describe('Planning Progress', () => {
 
     await page.reload();
     const checked = page.getByRole('checkbox').first();
-    await expect(checked).toHaveAttribute('data-state', 'checked');
+    await expect.poll(async () => checked.getAttribute('data-state')).toBe('checked');
 
     await page.getByRole('button', { name: '체크 초기화' }).click();
     await expect.poll(async () => {
@@ -153,5 +192,89 @@ test.describe('Planning Progress', () => {
       const state = await checkbox.getAttribute('data-state');
       return state === 'checked';
     }).toBeTruthy();
+  });
+
+  test('planning requirements should support curriculum version coverage and category summaries', async ({ request }) => {
+    const targetTrack = await selectActiveTrackAndResetProgress(request, BASE_URL);
+    if (!targetTrack.courses || targetTrack.courses.length === 0) {
+      test.skip(true, 'No courses available on selected planning track.');
+      return;
+    }
+
+    const curriculumRes = await request.get(`${BASE_URL}/api/curriculum`);
+    expect(curriculumRes.ok()).toBeTruthy();
+    const curriculumJson = await curriculumRes.json();
+    expect(curriculumJson.success).toBeTruthy();
+
+    const availableYears = Array.isArray(curriculumJson.availableYears) ? curriculumJson.availableYears : [];
+    expect(availableYears.length).toBeGreaterThanOrEqual(2);
+    expect(availableYears).toContain(2016);
+    expect(availableYears).toContain(2025);
+    expect(availableYears).toContainEqual(Math.min(...availableYears));
+    expect(availableYears).toContainEqual(Math.max(...availableYears));
+
+    const baselineYear = availableYears[0];
+    const latestYear = availableYears[availableYears.length - 1];
+    expect(baselineYear).toBeLessThanOrEqual(latestYear);
+    expect(latestYear).toBe(2025);
+
+    const baselineRes = await request.get(
+      `${BASE_URL}/api/planning/requirements?trackId=${targetTrack.id}&academicYear=${baselineYear}`,
+    );
+    expect(baselineRes.ok()).toBeTruthy();
+    const baselineJson = (await baselineRes.json()) as RequirementResponse;
+    expect(baselineJson.success).toBeTruthy();
+    expect(baselineJson.academicYear).toBe(baselineYear);
+    expect(Array.isArray(baselineJson.track.categorySummaries)).toBeTruthy();
+    expect(baselineJson.track.requiredCourseCount).toBeGreaterThan(0);
+    expect(typeof baselineJson.track.requirementStatus?.missingRequiredCourseNamesCount).toBe('number');
+    expect(baselineJson.track.requirementStatus?.missingRequiredCourseNamesCount).toBe(
+      baselineJson.track.missingRequiredCourseNames.length,
+    );
+
+    const latestRes = await request.get(
+      `${BASE_URL}/api/planning/requirements?trackId=${targetTrack.id}&academicYear=${latestYear}`,
+    );
+    expect(latestRes.ok()).toBeTruthy();
+    const latestJson = (await latestRes.json()) as RequirementResponse;
+    expect(latestJson.success).toBeTruthy();
+    expect(latestJson.academicYear).toBe(latestYear);
+
+    expect(latestJson.track.requirementStatus).toBeTruthy();
+    expect(typeof latestJson.track.requirementStatus?.requiredCoursesSatisfied).toBe('boolean');
+    expect(typeof latestJson.track.requirementStatus?.categoryRequirementsSatisfied).toBe('boolean');
+    expect(typeof latestJson.track.requirementStatus?.overallSatisfied).toBe('boolean');
+    expect(Array.isArray(latestJson.track.requirementStatus?.categoryChecks)).toBeTruthy();
+    expect(
+      latestJson.track.requirementStatus?.categoryChecks?.every((check) => typeof check.satisfied === 'boolean'),
+    ).toBeTruthy();
+
+    const anyCreditCategory = latestJson.track.categorySummaries.some((summary) => summary.requiredCredits > 0);
+    expect(anyCreditCategory).toBeTruthy();
+
+    const sampleCourseId = targetTrack.courses[0].id;
+    const saveRes = await request.post(`${BASE_URL}/api/planning/progress`, {
+      data: {
+        trackId: targetTrack.id,
+        completedCourseIds: [sampleCourseId],
+      },
+    });
+    expect(saveRes.ok()).toBeTruthy();
+
+    const refreshedRes = await request.get(
+      `${BASE_URL}/api/planning/requirements?trackId=${targetTrack.id}&academicYear=${latestYear}`,
+    );
+    expect(refreshedRes.ok()).toBeTruthy();
+    const refreshedJson = (await refreshedRes.json()) as RequirementResponse;
+    expect(refreshedJson.success).toBeTruthy();
+    const trackKey = String(targetTrack.id);
+    const completionByTrack = refreshedJson.completionByTrack || {};
+    const completedIds = completionByTrack[trackKey] || [];
+    expect(completedIds).toContain(sampleCourseId);
+
+    const categoryTotalRates = refreshedJson.track.categorySummaries
+      .map((summary) => summary.completionRate)
+      .filter((rate) => Number.isFinite(rate));
+    expect(categoryTotalRates.length).toBeGreaterThan(0);
   });
 });

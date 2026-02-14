@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import type { UserProfile } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
     applySessionCookieHeader,
@@ -132,7 +133,7 @@ function parseDashboardState(value: unknown) {
             .map((item) => String(item))
             .map((item) => item.trim())
             .filter(Boolean)
-            .filter((item) => VALID_WIDGET_IDS.includes(item));
+            .filter((item): item is (typeof VALID_WIDGET_IDS)[number] => (VALID_WIDGET_IDS as readonly string[]).includes(item));
 
         next.widgetOrder = Array.from(new Set(order));
     }
@@ -143,12 +144,12 @@ function parseDashboardState(value: unknown) {
         }
 
         const enabledRaw = raw.enabledWidgets as Record<string, unknown>;
-        const enabled: DashboardState['enabledWidgets'] = {};
+        type EnabledWidgets = NonNullable<DashboardState['enabledWidgets']>;
+        const enabled: Partial<EnabledWidgets> = {};
         let enabledInvalid = false;
 
-        (Object.keys(enabledRaw) as Array<keyof DashboardState['enabledWidgets']>).forEach((key) => {
-            if (!VALID_WIDGET_IDS.includes(key as string)) return;
-            const boolValue = enabledRaw[key];
+        for (const key of VALID_WIDGET_IDS as unknown as Array<keyof EnabledWidgets>) {
+            const boolValue = enabledRaw[key as string];
             if (typeof boolValue === 'boolean') {
                 enabled[key] = boolValue;
             } else if (boolValue === undefined) {
@@ -156,7 +157,7 @@ function parseDashboardState(value: unknown) {
             } else {
                 enabledInvalid = true;
             }
-        });
+        }
 
         if (enabledInvalid) {
             return { provided: true, value: null as DashboardState | null, invalid: true };

@@ -128,6 +128,7 @@ export async function POST(request: Request) {
         let skippedDisabled = 0;
         let skippedNoEmail = 0;
         let skippedAlreadySent = 0;
+        const failedReasons: string[] = [];
 
         for (const profile of targets) {
             if (!profile.emailAlertsEnabled) {
@@ -177,6 +178,16 @@ export async function POST(request: Request) {
                 }
             } else {
                 failed += 1;
+                if (result.error) {
+                    failedReasons.push(result.error);
+                }
+                console.warn('Digest email failed', {
+                    userId: profile.id,
+                    route: '/api/alerts/email/digest',
+                    email: to,
+                    mode: result.mode,
+                    reason: result.error || 'unknown',
+                });
             }
         }
 
@@ -196,6 +207,7 @@ export async function POST(request: Request) {
                 skippedDisabled,
                 skippedNoEmail,
                 skippedAlreadySent,
+                failedReasons: failed > 0 ? Array.from(new Set(failedReasons)).slice(0, 10) : [],
             },
         });
         applySessionCookieHeader(response, session.setCookie);

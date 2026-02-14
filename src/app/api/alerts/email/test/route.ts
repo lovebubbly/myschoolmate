@@ -17,8 +17,24 @@ export async function POST(request: Request) {
     try {
         const session = await resolveUserProfile(request);
         const body = await request.json().catch(() => ({}));
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            const invalidResponse = NextResponse.json({
+                success: false,
+                error: 'Invalid request body.',
+            }, { status: 400 });
+            applySessionCookieHeader(invalidResponse, session.setCookie);
+            return invalidResponse;
+        }
         const bodyEmail = parseEmail((body as { email?: unknown }).email);
+        const hasBodyEmail = Object.prototype.hasOwnProperty.call(body, 'email');
         const profileEmail = parseEmail(session.profile.notificationEmail) ?? parseEmail(session.profile.email);
+        if (hasBodyEmail && bodyEmail === null) {
+            return NextResponse.json({
+                success: false,
+                error: 'Invalid email format.',
+            }, { status: 400 });
+        }
+
         const to = bodyEmail ?? profileEmail;
 
         if (!to) {

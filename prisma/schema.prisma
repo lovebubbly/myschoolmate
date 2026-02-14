@@ -38,13 +38,16 @@ model UserProfile {
   email     String?
   displayName String?
   grade     Int      @default(1)
-  income    Int      @default(10) // 0-10, 10=default/rich/unknown constraint? Let's say 10 is max. 
+  cohortYear Int?
+  income    Int      @default(10) // 0-10, 10=default/rich/unknown constraint? Let's say 10 is max.
   gpa       Float    @default(0.0)
   trackId   Int?
   notificationEmail String?
   emailAlertsEnabled Boolean @default(false)
   lastEmailedBriefingDate String?
+  dashboardState Json?
   track     Track?   @relation(fields: [trackId], references: [id])
+  plannerProgresses PlannerProgress[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -54,16 +57,58 @@ model Track {
   name        String   // "정보통신 및 네트워크", etc.
   courses     Course[]
   users       UserProfile[]
+  plannerProgresses PlannerProgress[]
+}
+
+model PlannerProgress {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  trackId   Int
+  courseId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track     Track      @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, trackId, courseId])
+  @@index([userId, trackId])
 }
 
 model Course {
   id        String   @id // Course Number (e.g., 5108112)
   name      String
   credit    String   // e.g. "3-3-0"
+  creditPoints Int    @default(0)
   grade     Int?     // Recommended Grade (1-4)
   semester  Int?     // 1 or 2
   category  String?  // "전공 필수", "전공 선택", "교양"
   tracks    Track[] 
+}
+
+model CurriculumVersion {
+  id         Int      @id @default(autoincrement())
+  academicYear Int     @unique
+  label       String
+  source      String?
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  requirements TrackCurriculumRequirement[]
+}
+
+model TrackCurriculumRequirement {
+  id               Int       @id @default(autoincrement())
+  curriculumVersionId Int
+  trackId          Int
+  requiredCourses  Json
+  categoryRequirements Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  curriculumVersion CurriculumVersion @relation(fields: [curriculumVersionId], references: [id], onDelete: Cascade)
+  track            Track             @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([curriculumVersionId, trackId])
 }
 
 model DailyBriefing {

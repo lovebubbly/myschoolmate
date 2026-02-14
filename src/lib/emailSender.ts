@@ -97,10 +97,11 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
             messageId: info.messageId,
         };
     } catch (error) {
+        const reason = String(error);
         return {
             ok: false,
             mode: 'smtp',
-            error: String(error),
+            error: reason,
         };
     }
 }

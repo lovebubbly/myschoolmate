@@ -126,6 +126,7 @@ SMTP_PORT="587"
 SMTP_USER="smtp-username"
 SMTP_PASS="smtp-password"
 SMTP_FROM="MySchoolMate <no-reply@example.com>"
+ADMIN_ACTION_TOKEN="set-a-strong-token-for-admin-actions"
 EMAIL_ALERT_ADMIN_TOKEN="set-only-if-you-need-scope-all"
 # Optional: SMTP_PORT=465이면 자동 secure, 또는 SMTP_SECURE=true
 ```
@@ -144,6 +145,19 @@ npm run dev
 ```
 
 → http://localhost:3000 에서 확인
+
+### 5. 배포 전/운영 점검
+```bash
+BASE_URL=http://localhost:3000 ADMIN_TOKEN=<ADMIN_ACTION_TOKEN> ./scripts/local-preflight.sh
+```
+- 운영자용 상세 점검은 `OPERATIONS.md`를 확인하세요.
+- 운영자 액션 API(`/api/notices/crawl`, `/api/crawl`, `/api/debug/reset`)는 `x-admin-token`, `adminToken`, `admin_action_token` 중 하나의 인증을 필요로 합니다.
+- 이메일 테스트/발송 API는 잘못된 입력 시 400 반환, 실패 사유 요약 응답, SMTP 미설정 시 dry-run 동작을 보장합니다.
+
+### 6. 운영 로그 체크
+- 관리 API 거부 로그: `source`, `ip`, `route`, `reason`
+- 알림 실패 로그: `userId`, `email`, `route`, `reason`
+- 크롤러 상태: `autoCrawler.lastFailureReason`, `autoCrawler.lastSuccessAt`, `autoCrawler.retryCount`
 
 ---
 

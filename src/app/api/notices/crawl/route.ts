@@ -4,8 +4,14 @@ import {
     getNoticeAutoCrawlerStatus,
     triggerNoticeCrawl,
 } from '@/lib/noticeAutoCrawler';
+import { requireAdminAction } from '@/lib/adminActionGuard';
 
-export async function POST() {
+export async function POST(request: Request) {
+    const guard = requireAdminAction(request);
+    if (!guard.ok) {
+        return guard.response;
+    }
+
     try {
         // 1. Run crawler with global lock
         const crawl = await triggerNoticeCrawl('api:notices:crawl', { refreshExisting: true });

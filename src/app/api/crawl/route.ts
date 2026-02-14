@@ -2,8 +2,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { triggerNoticeCrawl } from '@/lib/noticeAutoCrawler';
+import { requireAdminAction } from '@/lib/adminActionGuard';
 
-export async function GET() {
+export async function GET(request: Request) {
+    const guard = requireAdminAction(request);
+    if (!guard.ok) {
+        return guard.response;
+    }
+
     try {
         // Crawl ALL boards (Academic/Scholarship, General, Employment, News)
         const crawl = await triggerNoticeCrawl('api:crawl', { refreshExisting: true });

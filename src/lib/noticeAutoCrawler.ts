@@ -28,6 +28,8 @@ type NoticeAutoCrawlerState = {
     lastRunAt: string | null;
     lastSuccessAt: string | null;
     lastError: string | null;
+    lastFailureReason: string | null;
+    retryCount: number;
     lastTrigger: string | null;
     lastProcessedCount: number;
 };
@@ -55,6 +57,8 @@ function getState(): NoticeAutoCrawlerState {
             lastRunAt: null,
             lastSuccessAt: null,
             lastError: null,
+            lastFailureReason: null,
+            retryCount: 0,
             lastTrigger: null,
             lastProcessedCount: 0,
         };
@@ -89,11 +93,16 @@ async function runCrawl(trigger: string, options?: TriggerOptions): Promise<Trig
         state.lastRunAt = nowIso;
         state.lastSuccessAt = nowIso;
         state.lastError = null;
+        state.lastFailureReason = null;
+        state.retryCount = 0;
         state.lastProcessedCount = crawled.length;
         return { triggered: true, reason: 'started', count: crawled.length };
     } catch (error) {
         state.lastRunAt = new Date().toISOString();
-        state.lastError = String(error);
+        const reason = String(error);
+        state.lastError = reason;
+        state.lastFailureReason = reason;
+        state.retryCount += 1;
         throw error;
     } finally {
         state.running = false;
@@ -156,7 +165,10 @@ export function startNoticeAutoCrawler() {
     state.timer = setInterval(() => {
         void ensureFreshNotices('interval').catch((error) => {
             const current = getState();
-            current.lastError = String(error);
+            const reason = String(error);
+            current.lastError = reason;
+            current.lastFailureReason = reason;
+            current.retryCount += 1;
         });
     }, state.intervalMs);
 
@@ -166,7 +178,10 @@ export function startNoticeAutoCrawler() {
 
     void ensureFreshNotices('startup').catch((error) => {
         const current = getState();
-        current.lastError = String(error);
+        const reason = String(error);
+        current.lastError = reason;
+        current.lastFailureReason = reason;
+        current.retryCount += 1;
     });
 }
 
@@ -184,6 +199,8 @@ export function getNoticeAutoCrawlerStatus() {
         lastRunAt: state.lastRunAt,
         lastSuccessAt: state.lastSuccessAt,
         lastError: state.lastError,
+        lastFailureReason: state.lastFailureReason,
+        retryCount: state.retryCount,
         lastTrigger: state.lastTrigger,
         lastProcessedCount: state.lastProcessedCount,
     };

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, ArrowRight, Calendar, Sparkles, SlidersHorizontal, Map as MapIcon, Settings as SettingsIcon, LayoutGrid, List, BellRing, CheckCheck, Clock3 } from "lucide-react";
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Search, X } from "lucide-react";
+import Link from "next/link";
 
 interface Notice {
   id: number;
@@ -62,8 +63,87 @@ interface LoadedProfile {
   gpa: number;
 }
 
+interface NoticeAutoCrawlerStatus {
+  started: boolean;
+  running: boolean;
+  intervalMinutes: number;
+  maxAgeMinutes: number;
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  lastFailureReason: string | null;
+  lastProcessedCount: number;
+  retryCount: number;
+  lastTrigger: string | null;
+}
+
+type DashboardState = {
+  readNoticeIds: number[];
+  widgetOrder: string[];
+  enabledWidgets: {
+    inbox: boolean;
+    cafeteria: boolean;
+    notices: boolean;
+  };
+};
+
 const READ_NOTICE_IDS_KEY = 'dashboard-read-notice-ids-v1';
 const NOTICE_BASELINE_KEY = 'dashboard-notice-baseline-v1';
+const WIDGET_ORDER_KEY = 'dashboard-widget-order';
+const WIDGET_ENABLED_KEY = 'dashboard-enabled-widgets';
+const FALLBACK_WIDGET_ORDER = ['inbox', 'cafeteria', 'notices'];
+const FALLBACK_WIDGET_ENABLED = { inbox: true, cafeteria: true, notices: true };
+const VALID_WIDGET_IDS = ['inbox', 'cafeteria', 'notices'];
+
+function normalizeReadNoticeIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item > 0)
+    )
+  );
+}
+
+function normalizeWidgetOrder(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...FALLBACK_WIDGET_ORDER];
+
+  const normalized = value
+    .map((item) => String(item).trim())
+    .filter((item) => VALID_WIDGET_IDS.includes(item));
+
+  const unique = Array.from(new Set(normalized));
+  const missing = FALLBACK_WIDGET_ORDER.filter((item) => !unique.includes(item));
+  return [...unique, ...missing];
+}
+
+function normalizeEnabledWidgets(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return FALLBACK_WIDGET_ENABLED;
+
+  return {
+    inbox: typeof (value as { inbox?: unknown }).inbox === 'boolean' ? Boolean((value as { inbox?: unknown }).inbox) : FALLBACK_WIDGET_ENABLED.inbox,
+    cafeteria: typeof (value as { cafeteria?: unknown }).cafeteria === 'boolean' ? Boolean((value as { cafeteria?: unknown }).cafeteria) : FALLBACK_WIDGET_ENABLED.cafeteria,
+    notices: typeof (value as { notices?: unknown }).notices === 'boolean' ? Boolean((value as { notices?: unknown }).notices) : FALLBACK_WIDGET_ENABLED.notices,
+  };
+}
+
+function toCrawlerStatusText(status: NoticeAutoCrawlerStatus | null) {
+  if (!status) return '공지 수집 상태: 확인 중';
+  if (status.running) return '공지 수집 상태: 현재 수집 진행 중';
+
+  if (status.lastFailureReason) {
+    const countText = status.retryCount > 0 ? ` (재시도 ${status.retryCount}회)` : '';
+    return `최신 데이터 갱신 실패: ${status.lastFailureReason}${countText}`;
+  }
+
+  if (status.lastSuccessAt) {
+    const latest = new Date(status.lastSuccessAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+    return `최신 데이터 갱신 상태: 정상 (${latest})`;
+  }
+
+  return '최신 데이터 갱신 상태: 미수집';
+}
 
 function parseDeadline(deadline?: string | null): Date | null {
   if (!deadline) return null;
@@ -136,88 +216,95 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
       }}
       className="h-full"
     >
+      <button
+        type="button"
+        onClick={() => onOpen(notice)}
+        aria-label={`공지 상세 열기: ${notice.title}`}
+        className="w-full h-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 rounded-[24px]"
+      >
       <Card
         className="group relative overflow-hidden bg-card hover:bg-muted/30 border-border/60 hover:border-primary/30 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 rounded-[24px] cursor-pointer h-full min-h-[220px]"
-        onClick={() => onOpen(notice)}
       >
-        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+          <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
 
-        <div className="p-5 flex flex-col gap-4 h-full">
-          <div className="flex justify-between items-start gap-4">
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Category Badge - Minimal */}
-              <span className="px-2.5 py-1 rounded-[10px] bg-muted/50 text-muted-foreground border border-border/50 text-[11px] font-semibold transition-colors group-hover:text-foreground group-hover:border-primary/10">
-                {(() => {
-                  const cat = notice.category;
-                  // Handle combined or specific categories
-                  if (cat.includes('Academic')) return '학사';
-                  if (cat.includes('Scholarship')) return '장학';
-                  if (cat.includes('Employment')) return '취업';
-                  if (cat.includes('Tuition')) return '등록금';
-                  return translateType(cat);
-                })()}
-              </span>
+          <div className="p-5 flex flex-col gap-4 h-full">
+            <div className="flex justify-between items-start gap-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Category Badge - Minimal */}
+                <span className="px-2.5 py-1 rounded-[10px] bg-muted/50 text-muted-foreground border border-border/50 text-[11px] font-semibold transition-colors group-hover:text-foreground group-hover:border-primary/10">
+                  {(() => {
+                    const cat = notice.category;
+                    // Handle combined or specific categories
+                    if (cat.includes('Academic')) return '학사';
+                    if (cat.includes('Scholarship')) return '장학';
+                    if (cat.includes('Employment')) return '취업';
+                    if (cat.includes('Tuition')) return '등록금';
+                    return translateType(cat);
+                  })()}
+                </span>
 
-              {/* Special Tags - Outline Style */}
-              {notice.scholarshipType && notice.scholarshipType !== 'Other' && (
-                <span className="px-2.5 py-1 rounded-[10px] bg-blue-500/[0.05] text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/50 text-[11px] font-medium">
-                  {translateType(notice.scholarshipType)}
-                </span>
-              )}
-              {filterProfile.grade > 0 && notice.minGrade && filterProfile.grade >= notice.minGrade && (
-                <span className="flex items-center gap-1 px-2.5 py-1 rounded-[10px] bg-green-500/[0.05] text-green-600 dark:text-green-400 border border-green-200/50 dark:border-green-800/50 text-[11px] font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500/60 animate-pulse" />
-                  학년 매칭
-                </span>
-              )}
+                {/* Special Tags - Outline Style */}
+                {notice.scholarshipType && notice.scholarshipType !== 'Other' && (
+                  <span className="px-2.5 py-1 rounded-[10px] bg-blue-500/[0.05] text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/50 text-[11px] font-medium">
+                    {translateType(notice.scholarshipType)}
+                  </span>
+                )}
+                {filterProfile.grade > 0 && notice.minGrade && filterProfile.grade >= notice.minGrade && (
+                  <span className="flex items-center gap-1 px-2.5 py-1 rounded-[10px] bg-green-500/[0.05] text-green-600 dark:text-green-400 border border-green-200/50 dark:border-green-800/50 text-[11px] font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500/60 animate-pulse" />
+                    학년 매칭
+                  </span>
+                )}
+              </div>
+              <span className="text-xs text-muted-foreground/60 font-medium shrink-0 tracking-tight">{notice.date}</span>
             </div>
-            <span className="text-xs text-muted-foreground/60 font-medium shrink-0 tracking-tight">{notice.date}</span>
-          </div>
 
-          <h3 className="font-bold text-[17px] leading-snug text-foreground/90 group-hover:text-primary transition-colors tracking-tight">
-            {notice.title}
-          </h3>
+            <h3 className="font-bold text-[17px] leading-snug text-foreground/90 group-hover:text-primary transition-colors tracking-tight">
+              {notice.title}
+            </h3>
 
-          {/* AI Summary Section - Cleaner Look + Gradient Restored */}
-          {notice.summary && (
-            <div className="text-sm font-medium text-foreground/90 leading-relaxed bg-muted/30 p-4 rounded-2xl border border-border/40 group-hover:border-primary/10 transition-colors">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Sparkles className="w-4 h-4 text-purple-500" />
-                <span className="text-xs font-extrabold bg-gradient-to-r from-blue-600 via-purple-600 to-red-500 bg-clip-text text-transparent">
-                  AI 요약
+            {/* AI Summary Section - Cleaner Look + Gradient Restored */}
+            {notice.summary && (
+              <div className="text-sm font-medium text-foreground/90 leading-relaxed bg-muted/30 p-4 rounded-2xl border border-border/40 group-hover:border-primary/10 transition-colors">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Sparkles className="w-4 h-4 text-purple-500" />
+                  <span className="text-xs font-extrabold bg-gradient-to-r from-blue-600 via-purple-600 to-red-500 bg-clip-text text-transparent">
+                    AI 요약
+                  </span>
+                </div>
+                <span className="block line-clamp-2 md:line-clamp-3">
+                  {notice.summary}
                 </span>
               </div>
-              <span className="block line-clamp-2 md:line-clamp-3">
-                {notice.summary}
-              </span>
-            </div>
-          )}
+            )}
 
-          {/* Bottom Tags - Unified Minimal Style */}
-          <div className="mt-auto pt-3 flex flex-wrap gap-2">
-            {notice.deadline && (
-              <span className="flex items-center gap-1.5 text-[11px] font-medium text-rose-600 dark:text-rose-400 bg-rose-500/[0.05] px-2.5 py-1 rounded-lg border border-rose-200/50 dark:border-rose-900/30">
-                <Calendar className="w-3 h-3 opacity-70" />
-                <span>~{notice.deadline}</span>
-              </span>
-            )}
-            {notice.minGrade && (
-              <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
-                최소 {notice.minGrade}학년
-              </span>
-            )}
-            {notice.maxIncome !== null && (
-              <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
-                소득 {notice.maxIncome}구간↓
-              </span>
-            )}
-            {notice.minGpa && (
-              <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
-                학점 {notice.minGpa}↑
-              </span>
-            )}
+            {/* Bottom Tags - Unified Minimal Style */}
+            <div className="mt-auto pt-3 flex flex-wrap gap-2">
+              {notice.deadline && (
+                <span className="flex items-center gap-1.5 text-[11px] font-medium text-rose-600 dark:text-rose-400 bg-rose-500/[0.05] px-2.5 py-1 rounded-lg border border-rose-200/50 dark:border-rose-900/30">
+                  <Calendar className="w-3 h-3 opacity-70" />
+                  <span>~{notice.deadline}</span>
+                </span>
+              )}
+              {notice.minGrade && (
+                <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
+                  최소 {notice.minGrade}학년
+                </span>
+              )}
+              {notice.maxIncome !== null && (
+                <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
+                  소득 {notice.maxIncome}구간↓
+                </span>
+              )}
+              {notice.minGpa && (
+                <span className="text-[11px] font-medium text-muted-foreground/80 bg-secondary/50 px-2.5 py-1 rounded-lg border border-border/50">
+                  학점 {notice.minGpa}↑
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        </Card>
+      </button>
       </Card>
     </motion.div>
   );
@@ -318,6 +405,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [briefing, setBriefing] = useState<string>('');
   const [briefingLoading, setBriefingLoading] = useState(false);
+  const [autoCrawlerStatus, setAutoCrawlerStatus] = useState<NoticeAutoCrawlerStatus | null>(null);
 
   // Layout & Search State
   const [layout, setLayout] = useState<'grid' | 'list'>('grid');
@@ -353,42 +441,70 @@ export default function Home() {
 
   // Widget Reordering State
   const [widgetOrder, setWidgetOrder] = useState<string[]>(() => {
-    const fallback = ['inbox', 'cafeteria', 'notices'];
-    if (typeof window === 'undefined') return fallback;
+    if (typeof window === 'undefined') return [...FALLBACK_WIDGET_ORDER];
 
-    const savedOrder = localStorage.getItem('dashboard-widget-order');
-    if (!savedOrder) return fallback;
+    const savedOrder = localStorage.getItem(WIDGET_ORDER_KEY);
+    if (!savedOrder) return [...FALLBACK_WIDGET_ORDER];
 
     try {
       const parsedOrder = JSON.parse(savedOrder);
-      if (!Array.isArray(parsedOrder)) return fallback;
-      const normalized = fallback.filter((id) => parsedOrder.includes(id));
-      const missing = fallback.filter((id) => !normalized.includes(id));
-      return [...normalized, ...missing];
+      if (!Array.isArray(parsedOrder)) return [...FALLBACK_WIDGET_ORDER];
+      const normalized = normalizeWidgetOrder(parsedOrder);
+      return normalized;
     } catch {
-      return fallback;
+      return [...FALLBACK_WIDGET_ORDER];
     }
   });
   const [enabledWidgets, setEnabledWidgets] = useState<Record<string, boolean>>(() => {
-    const fallback = { inbox: true, cafeteria: true, notices: true };
-    if (typeof window === 'undefined') return fallback;
+    if (typeof window === 'undefined') return { ...FALLBACK_WIDGET_ENABLED };
 
-    const savedEnabled = localStorage.getItem('dashboard-enabled-widgets');
-    if (!savedEnabled) return fallback;
+    const savedEnabled = localStorage.getItem(WIDGET_ENABLED_KEY);
+    if (!savedEnabled) return { ...FALLBACK_WIDGET_ENABLED };
 
     try {
       const parsedEnabled = JSON.parse(savedEnabled);
-      if (!parsedEnabled || typeof parsedEnabled !== 'object') return fallback;
-      return {
-        inbox: parsedEnabled.inbox ?? true,
-        cafeteria: parsedEnabled.cafeteria ?? true,
-        notices: parsedEnabled.notices ?? true,
-      };
+      return normalizeEnabledWidgets(parsedEnabled);
     } catch {
-      return fallback;
+      return { ...FALLBACK_WIDGET_ENABLED };
     }
   });
   const [isStyleDialogOpen, setIsStyleDialogOpen] = useState(false);
+  const allowDashboardSyncRef = useRef(false);
+  const dashboardSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const syncDashboardState = async (nextState?: Partial<DashboardState>) => {
+    if (!allowDashboardSyncRef.current) return;
+
+    const payload: DashboardState = {
+      readNoticeIds: normalizeReadNoticeIds(nextState?.readNoticeIds ?? readNoticeIds),
+      widgetOrder: normalizeWidgetOrder(nextState?.widgetOrder ?? widgetOrder),
+      enabledWidgets: normalizeEnabledWidgets(nextState?.enabledWidgets ?? enabledWidgets),
+    };
+
+    try {
+      await fetch('/api/user/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dashboardState: payload,
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to sync dashboard state:', error);
+    }
+  };
+
+  const queueDashboardSync = (nextState?: Partial<DashboardState>) => {
+    if (!allowDashboardSyncRef.current) return;
+
+    if (dashboardSyncTimerRef.current !== null) {
+      window.clearTimeout(dashboardSyncTimerRef.current);
+    }
+
+    dashboardSyncTimerRef.current = window.setTimeout(() => {
+      void syncDashboardState(nextState);
+    }, 500);
+  };
 
   async function fetchBriefing() {
     setBriefingLoading(true);
@@ -409,6 +525,9 @@ export default function Home() {
       const res = await fetch('/api/user/profile', { cache: 'no-store' });
       const data = await res.json();
       if (data.success && data.profile) {
+        const dashboardState = data.profile.dashboardState;
+        const hasDashboardState = dashboardState !== null && typeof dashboardState === 'object' && !Array.isArray(dashboardState);
+
         const normalizedProfile: LoadedProfile = {
           grade: Number(data.profile.grade) || 0,
           income: Number(data.profile.income) || 11,
@@ -421,6 +540,27 @@ export default function Home() {
           income: normalizedProfile.income,
           gpa: normalizedProfile.gpa
         });
+
+        if (hasDashboardState) {
+          const rawDashboardState = dashboardState as Record<string, unknown>;
+          if (Object.prototype.hasOwnProperty.call(rawDashboardState, 'readNoticeIds')) {
+            const remoteReadNoticeIds = normalizeReadNoticeIds(rawDashboardState.readNoticeIds);
+            setReadNoticeIds(remoteReadNoticeIds);
+            localStorage.setItem(READ_NOTICE_IDS_KEY, JSON.stringify(remoteReadNoticeIds));
+          }
+          if (Object.prototype.hasOwnProperty.call(rawDashboardState, 'widgetOrder')) {
+            const remoteWidgetOrder = normalizeWidgetOrder(rawDashboardState.widgetOrder);
+            setWidgetOrder(remoteWidgetOrder);
+            localStorage.setItem(WIDGET_ORDER_KEY, JSON.stringify(remoteWidgetOrder));
+          }
+          if (Object.prototype.hasOwnProperty.call(rawDashboardState, 'enabledWidgets')) {
+            const remoteEnabledWidgets = normalizeEnabledWidgets(rawDashboardState.enabledWidgets);
+            setEnabledWidgets(remoteEnabledWidgets);
+            localStorage.setItem(WIDGET_ENABLED_KEY, JSON.stringify(remoteEnabledWidgets));
+          }
+        }
+
+        allowDashboardSyncRef.current = true;
         fetchBriefing();
       }
     } catch (e) {
@@ -433,13 +573,20 @@ export default function Home() {
       const res = await fetch('/api/notices');
       const data = await res.json();
       if (data.success) {
+        if (data.autoCrawler) {
+          setAutoCrawlerStatus(data.autoCrawler);
+        }
         const incomingNotices: Notice[] = data.notices || [];
         setNotices(incomingNotices);
 
         // First-run baseline: treat currently loaded notices as read,
         // so inbox only highlights newly arrived notices afterward.
         if (incomingNotices.length > 0 && localStorage.getItem(NOTICE_BASELINE_KEY) !== '1') {
-          setReadNoticeIds((prev) => Array.from(new Set([...prev, ...incomingNotices.map((notice) => notice.id)])));
+          setReadNoticeIds((prev) => {
+            const next = Array.from(new Set([...prev, ...incomingNotices.map((notice) => notice.id)]));
+            queueDashboardSync({ readNoticeIds: next });
+            return next;
+          });
           localStorage.setItem(NOTICE_BASELINE_KEY, '1');
         }
       }
@@ -460,14 +607,17 @@ export default function Home() {
   }, [readNoticeIds]);
 
   const saveWidgetOrder = (newOrder: string[]) => {
-    setWidgetOrder(newOrder);
-    localStorage.setItem('dashboard-widget-order', JSON.stringify(newOrder));
+    const normalized = normalizeWidgetOrder(newOrder);
+    setWidgetOrder(normalized);
+    localStorage.setItem(WIDGET_ORDER_KEY, JSON.stringify(normalized));
+    queueDashboardSync({ widgetOrder: normalized });
   };
 
   const toggleWidget = (id: string) => {
     const newEnabled = { ...enabledWidgets, [id]: !enabledWidgets[id] };
     setEnabledWidgets(newEnabled);
-    localStorage.setItem('dashboard-enabled-widgets', JSON.stringify(newEnabled));
+    localStorage.setItem(WIDGET_ENABLED_KEY, JSON.stringify(newEnabled));
+    queueDashboardSync({ enabledWidgets: newEnabled as DashboardState['enabledWidgets'] });
   };
 
   const moveWidget = (id: string, direction: 'up' | 'down') => {
@@ -493,6 +643,9 @@ export default function Home() {
       const res = await fetch('/api/notices/crawl', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
+        if (data.autoCrawler) {
+          setAutoCrawlerStatus(data.autoCrawler);
+        }
         setNotices(data.notices || []);
         fetchBriefing();
       }
@@ -505,7 +658,12 @@ export default function Home() {
   const handleOpenNotice = (notice: Notice) => {
     setSelectedNotice(notice);
     setIsDialogOpen(true);
-    setReadNoticeIds((prev) => (prev.includes(notice.id) ? prev : [...prev, notice.id]));
+    setReadNoticeIds((prev) => {
+      if (prev.includes(notice.id)) return prev;
+      const next = [...prev, notice.id];
+      queueDashboardSync({ readNoticeIds: next });
+      return next;
+    });
   };
 
   // Filter & Search Logic
@@ -611,8 +769,11 @@ export default function Home() {
 
   const urgentInboxCount = inboxItems.filter((item) => item.type === 'DEADLINE_SOON').length;
   const markAllAsRead = () => {
-    setReadNoticeIds(Array.from(new Set([...readNoticeIds, ...notices.map((notice) => notice.id)])));
+    const next = Array.from(new Set([...readNoticeIds, ...notices.map((notice) => notice.id)]));
+    setReadNoticeIds(next);
+    queueDashboardSync({ readNoticeIds: next });
   };
+  const autoCrawlerStatusText = toCrawlerStatusText(autoCrawlerStatus);
 
   return (
     <div className="min-h-screen font-sans bg-[url('/background.png')] bg-cover bg-center bg-fixed text-foreground">
@@ -635,6 +796,9 @@ export default function Home() {
                     알림 {inboxItems.length}개
                   </span>
                 )}
+                <span className="text-xs text-muted-foreground/80">
+                  {autoCrawlerStatusText}
+                </span>
               </div>
               <div className="flex gap-2">
                 <Button
@@ -1196,8 +1360,9 @@ export default function Home() {
 
                       <AnimatePresence mode='popLayout'>
                         {pinnedNotices.length > 0 && isPinnedExpanded && (
-                          <motion.div
-                            key="pinned-notices"
+                        <motion.div
+                          data-testid="pinned-notices-expanded"
+                          key="pinned-notices"
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
@@ -1220,7 +1385,8 @@ export default function Home() {
                       </AnimatePresence>
 
                       <AnimatePresence mode='wait' initial={false}>
-                        <motion.div
+                    <motion.div
+                          data-testid={`regular-notices-${layout}`}
                           key={`regular-notices-${layout}`}
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}

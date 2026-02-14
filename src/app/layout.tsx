@@ -1,11 +1,9 @@
 
 import type { Metadata } from "next";
-import { Inter } from "next/font/google"; // Using Inter for "premium" feel as requested
 import "./globals.css";
 import { NavBar } from "@/components/NavBar";
 import { AuthSessionProvider } from "@/components/AuthSessionProvider";
-
-const inter = Inter({ subsets: ["latin"] });
+import { ThemeProvider } from "@/components/ThemeProvider";
 
 export const metadata: Metadata = {
   title: "MySchoolMate | 충북대학교 정보통신공학부 AI 비서",
@@ -15,16 +13,14 @@ export const metadata: Metadata = {
   },
 };
 
-import { ThemeProvider } from "@/components/ThemeProvider";
-
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} bg-background text-foreground antialiased`}>
+    <html lang="ko" suppressHydrationWarning>
+      <body className="bg-background text-foreground antialiased">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Utensils, RefreshCw, Coffee, Sun, Moon } from "lucide-react";
 import { motion, AnimatePresence } from 'framer-motion';
 
+type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER';
+
 interface MenuItem {
     id: number;
     restaurant: string;
@@ -20,7 +22,7 @@ export function CafeteriaWidget() {
     const [menus, setMenus] = useState<MenuItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [selectedRest, setSelectedRest] = useState('Hanbit');
-    const [selectedMeal, setSelectedMeal] = useState<'BREAKFAST' | 'LUNCH' | 'DINNER'>('LUNCH');
+    const [selectedMeal, setSelectedMeal] = useState<MealType>('LUNCH');
     const [selectedDate, setSelectedDate] = useState(new Date());
 
     const formatDate = (date: Date) => {
@@ -112,22 +114,41 @@ export function CafeteriaWidget() {
                 {/* Header */}
                 <div className="flex justify-between items-center mb-6">
                     <div className="flex items-center gap-3">
-                        <div className="bg-gradient-to-br from-orange-100 to-rose-100 dark:from-orange-950/30 dark:to-rose-950/30 p-2.5 rounded-2xl">
+                            <div className="bg-gradient-to-br from-orange-100 to-rose-100 dark:from-orange-950/30 dark:to-rose-950/30 p-2.5 rounded-2xl">
                             <Utensils className="w-5 h-5 text-orange-500" />
                         </div>
                         <div className="flex items-center gap-2">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-muted/50" onClick={() => changeDate(-1)}>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 rounded-full hover:bg-muted/50"
+                                onClick={() => changeDate(-1)}
+                                aria-label="이전 날짜"
+                            >
                                 <span className="text-lg text-muted-foreground/70">‹</span>
                             </Button>
                             <h2 className="text-xl font-bold bg-gradient-to-r from-orange-500 to-rose-500 bg-clip-text text-transparent transform translate-y-[1px]">
                                 {getDayLabel(selectedDate)} 학식
                             </h2>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-muted/50" onClick={() => changeDate(1)}>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 rounded-full hover:bg-muted/50"
+                                onClick={() => changeDate(1)}
+                                aria-label="다음 날짜"
+                            >
                                 <span className="text-lg text-muted-foreground/70">›</span>
                             </Button>
                         </div>
                     </div>
-                    <Button size="sm" variant="ghost" onClick={refreshMenu} disabled={loading} className="h-8 w-8 p-0 rounded-full hover:bg-muted/50">
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={refreshMenu}
+                        disabled={loading}
+                        className="h-8 w-8 p-0 rounded-full hover:bg-muted/50"
+                        aria-label="학식 메뉴 새로고침"
+                    >
                         <RefreshCw className={`w-4 h-4 text-muted-foreground/50 ${loading ? 'animate-spin' : ''}`} />
                     </Button>
                 </div>
@@ -137,6 +158,8 @@ export function CafeteriaWidget() {
                     {['Hanbit', 'Star', 'Eunhasu'].map(rest => (
                         <button
                             key={rest}
+                            type="button"
+                            aria-label={`${rest} 식당 학식 보기`}
                             onClick={() => setSelectedRest(rest)}
                             className={`flex-1 relative py-2 text-sm font-bold rounded-full transition-colors z-10 ${selectedRest === rest ? 'text-white' : 'text-muted-foreground hover:text-foreground/80'}`}
                         >
@@ -155,9 +178,9 @@ export function CafeteriaWidget() {
                 {/* Meal Time Tabs (Dynamic Icon) */}
                 <div className="flex justify-center gap-6 mb-6">
                     {[
-                        { id: 'BREAKFAST', label: '아침', icon: Coffee },
-                        { id: 'LUNCH', label: '점심', icon: Sun },
-                        { id: 'DINNER', label: '저녁', icon: Moon }
+                        { id: 'BREAKFAST' as MealType, label: '아침', icon: Coffee },
+                        { id: 'LUNCH' as MealType, label: '점심', icon: Sun },
+                        { id: 'DINNER' as MealType, label: '저녁', icon: Moon }
                     ].map(type => {
                         const isActive = selectedMeal === type.id;
                         const isAvailable = hasMenu(type.id);
@@ -165,7 +188,9 @@ export function CafeteriaWidget() {
                         return (
                             <button
                                 key={type.id}
-                                onClick={() => isAvailable && setSelectedMeal(type.id as any)}
+                                type="button"
+                                aria-label={`${type.label} 식사 시간 학식 보기`}
+                                onClick={() => isAvailable && setSelectedMeal(type.id)}
                                 disabled={!isAvailable}
                                 className={`flex flex-col items-center gap-2 group transition-all ${!isAvailable ? 'opacity-30 grayscale cursor-not-allowed' : 'cursor-pointer'}`}
                             >

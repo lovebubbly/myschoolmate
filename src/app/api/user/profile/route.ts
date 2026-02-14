@@ -131,7 +131,7 @@ function parseDashboardState(value: unknown) {
             .map((item) => String(item))
             .map((item) => item.trim())
             .filter(Boolean)
-            .filter((item) => VALID_WIDGET_IDS.includes(item as any));
+            .filter((item) => VALID_WIDGET_IDS.includes(item));
 
         next.widgetOrder = Array.from(new Set(order));
     }
@@ -167,12 +167,33 @@ function parseDashboardState(value: unknown) {
     return { provided: true, value: next };
 }
 
+function decodeDashboardState(rawState: string | null | undefined): DashboardState | null {
+    if (!rawState) return null;
+
+    try {
+        const parsed = JSON.parse(rawState);
+        return parseDashboardState(parsed).value;
+    } catch {
+        return null;
+    }
+}
+
+function encodeDashboardState(state: DashboardState | null | undefined): string | null {
+    if (!state) return null;
+    return JSON.stringify(state);
+}
+
+function withParsedDashboardState(profile: UserProfile) {
+    const dashboardState = decodeDashboardState(profile.dashboardState ?? undefined);
+    return { ...profile, dashboardState };
+}
+
 export async function GET(request: Request) {
     try {
         const session = await resolveUserProfile(request);
         const response = NextResponse.json({
             success: true,
-            profile: session.profile,
+            profile: withParsedDashboardState(session.profile),
             userId: session.userId,
             source: session.source,
         });
@@ -239,7 +260,7 @@ export async function POST(req: Request) {
         if (hasEmailAlertsEnabled) updatePayload.emailAlertsEnabled = parsedEmailAlertsEnabled.value;
 
         if (hasDashboardState) {
-            updatePayload.dashboardState = parsedDashboardState.value;
+            updatePayload.dashboardState = encodeDashboardState(parsedDashboardState.value);
         }
 
         const profile = await prisma.userProfile.upsert({
@@ -254,13 +275,13 @@ export async function POST(req: Request) {
                 cohortYear: hasCohortYear ? parsedCohortYear.value : session.profile.cohortYear,
                 notificationEmail: hasNotificationEmail ? hasNotificationEmailValue : session.profile.notificationEmail,
                 emailAlertsEnabled: hasEmailAlertsEnabled ? parsedEmailAlertsEnabled.value ?? false : false,
-                dashboardState: hasDashboardState ? parsedDashboardState.value : session.profile.dashboardState,
+                dashboardState: hasDashboardState ? encodeDashboardState(parsedDashboardState.value) : session.profile.dashboardState,
             },
         });
 
         const response = NextResponse.json({
             success: true,
-            profile,
+            profile: withParsedDashboardState(profile),
             userId: session.userId,
             source: session.source,
         });

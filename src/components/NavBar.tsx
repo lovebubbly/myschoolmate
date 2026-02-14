@@ -8,12 +8,14 @@ import { motion, useScroll, useTransform } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Home, Calendar, Settings, Sparkles, LogIn, UserRound } from 'lucide-react';
 import { getProviders, signIn, useSession } from 'next-auth/react';
+import { usePathname } from 'next/navigation';
 
 export function NavBar() {
     const [isScrolled, setIsScrolled] = useState(false);
     const [hasAuthProvider, setHasAuthProvider] = useState<boolean | null>(null);
     const { scrollY } = useScroll();
     const { data: session, status } = useSession();
+    const pathname = usePathname();
 
     // Dynamic padding based on scroll
     const padding = useTransform(scrollY, [0, 100], [24, 12]);
@@ -112,25 +114,32 @@ export function NavBar() {
                 )}
 
                 {navItems.map((item) => (
-                    <Link key={item.href} href={item.href}>
-                        <motion.div
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
+                    <motion.div
+                        key={item.href}
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                    >
+                        <Button
+                            asChild
+                            variant="ghost"
+                            className={cn(
+                                pathname === item.href ? "text-foreground bg-muted/50" : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                                isScrolled ? "h-9 px-3" : "h-10 px-4"
+                            )}
                         >
-                            <Button
-                                variant="ghost"
-                                className={cn(
-                                    "text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all",
-                                    isScrolled ? "h-9 px-3" : "h-10 px-4"
-                                )}
+                            <Link
+                                href={item.href}
+                                aria-current={pathname === item.href ? "page" : undefined}
+                                aria-label={item.label}
                             >
+                                <span className="sr-only">{item.label}</span>
                                 <item.icon className={cn("mr-1.5", isScrolled ? "w-4 h-4" : "w-4 h-4")} />
                                 <span className={isScrolled ? "hidden md:inline text-sm" : "text-sm"}>
                                     {item.label}
                                 </span>
-                            </Button>
-                        </motion.div>
-                    </Link>
+                            </Link>
+                        </Button>
+                    </motion.div>
                 ))}
 
                 <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>

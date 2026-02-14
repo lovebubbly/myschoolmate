@@ -6,11 +6,17 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import { getProviders, signIn, signOut, useSession } from 'next-auth/react';
+import Link from 'next/link';
 
 interface Track {
     id: number;
     name: string;
 }
+
+const COHORT_YEAR_OPTIONS = Array.from({ length: 10 }, (_, index) => {
+    const year = 2016 + index;
+    return { value: String(year), label: `${year} 입학` };
+});
 
 export default function Settings() {
     const router = useRouter();
@@ -19,6 +25,7 @@ export default function Settings() {
     const [income, setIncome] = useState('10');
     const [gpa, setGpa] = useState('0.0');
     const [trackId, setTrackId] = useState<string>('');
+    const [cohortYear, setCohortYear] = useState('');
     const [notificationEmail, setNotificationEmail] = useState('');
     const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(false);
     const [tracks, setTracks] = useState<Track[]>([]);
@@ -43,6 +50,7 @@ export default function Settings() {
             setGrade(String(data.profile.grade));
             setIncome(String(data.profile.income));
             setGpa(String(data.profile.gpa || '0.0'));
+            setCohortYear(data.profile.cohortYear ? String(data.profile.cohortYear) : '');
             setTrackId(String(data.profile.trackId || ''));
             setNotificationEmail(String(data.profile.notificationEmail || data.profile.email || ''));
             setEmailAlertsEnabled(Boolean(data.profile.emailAlertsEnabled));
@@ -74,7 +82,7 @@ export default function Settings() {
     const handleSave = async () => {
         const normalizedEmail = notificationEmail.trim().toLowerCase();
         if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-            alert('올바른 이메일 형식을 입력해주세요.');
+            setMailStatus('올바른 이메일 형식을 입력해주세요.');
             return;
         }
 
@@ -85,6 +93,7 @@ export default function Settings() {
                 income: parseInt(income),
                 gpa: parseFloat(gpa),
                 trackId: trackId ? parseInt(trackId) : null,
+                cohortYear: cohortYear ? parseInt(cohortYear) : null,
                 notificationEmail: normalizedEmail || null,
                 emailAlertsEnabled
             };
@@ -105,11 +114,11 @@ export default function Settings() {
             } else {
                 const err = await res.text();
                 console.error('Save failed:', err);
-                alert('저장에 실패했습니다. 다시 시도해주세요.');
+                setMailStatus('저장에 실패했습니다. 다시 시도해주세요.');
             }
         } catch (e) {
             console.error('Failed to save profile:', e);
-            alert('저장 중 오류가 발생했습니다.');
+            setMailStatus('저장 중 오류가 발생했습니다.');
         }
         setSaving(false);
     };
@@ -123,17 +132,18 @@ export default function Settings() {
                 setGrade(String(data.profile.grade));
                 setIncome(String(data.profile.income));
                 setGpa(String(data.profile.gpa || '0.0'));
+                setCohortYear(data.profile.cohortYear ? String(data.profile.cohortYear) : '');
                 setTrackId(String(data.profile.trackId || ''));
                 setNotificationEmail(String(data.profile.notificationEmail || data.profile.email || ''));
                 setEmailAlertsEnabled(Boolean(data.profile.emailAlertsEnabled));
                 router.refresh();
                 router.push('/');
             } else {
-                alert('새 사용자 세션 생성에 실패했습니다.');
+                setMailStatus('새 사용자 세션 생성에 실패했습니다.');
             }
         } catch (e) {
             console.error('Failed to start new session:', e);
-            alert('세션 전환 중 오류가 발생했습니다.');
+            setMailStatus('세션 전환 중 오류가 발생했습니다.');
         }
         setSwitchingSession(false);
     };
@@ -195,11 +205,13 @@ export default function Settings() {
     };
 
     return (
-        <div className="min-h-screen bg-background p-4 md:p-8 pt-[120px] md:pt-[120px] font-sans text-foreground flex flex-col items-center">
+        <div className="min-h-screen bg-background p-4 md:p-8 pt-20 md:pt-28 font-sans text-foreground flex flex-col items-center">
             <main className="w-full max-w-md space-y-6">
                 <header className="flex items-center gap-4">
-                    <Button variant="ghost" size="icon" onClick={() => window.location.href = '/'} className="-ml-2">
-                        <ArrowLeft className="w-6 h-6" />
+                    <Button asChild variant="ghost" size="icon" className="-ml-2">
+                        <Link href="/" aria-label="대시보드로 돌아가기">
+                            <ArrowLeft className="w-6 h-6" />
+                        </Link>
                     </Button>
                     <h1 className="text-2xl font-bold">내 정보 설정 ⚙️</h1>
                 </header>
@@ -208,8 +220,9 @@ export default function Settings() {
 
                     {/* Grade */}
                     <div className="space-y-3">
-                        <label className="text-sm font-bold text-muted-foreground">학년</label>
+                        <label htmlFor="grade" className="text-sm font-bold text-muted-foreground">학년</label>
                         <select
+                            id="grade"
                             className="w-full bg-muted/50 p-4 rounded-xl font-medium appearance-none focus:ring-2 focus:ring-primary/20 outline-none border border-transparent focus:border-primary/50"
                             value={grade}
                             onChange={(e) => setGrade(e.target.value)}
@@ -220,8 +233,9 @@ export default function Settings() {
 
                     {/* Income */}
                     <div className="space-y-3">
-                        <label className="text-sm font-bold text-muted-foreground">소득 구간 (학자금 지원구간)</label>
+                        <label htmlFor="income" className="text-sm font-bold text-muted-foreground">소득 구간 (학자금 지원구간)</label>
                         <select
+                            id="income"
                             className="w-full bg-muted/50 p-4 rounded-xl font-medium appearance-none focus:ring-2 focus:ring-primary/20 outline-none border border-transparent focus:border-primary/50"
                             value={income}
                             onChange={(e) => setIncome(e.target.value)}
@@ -245,9 +259,10 @@ export default function Settings() {
 
                     {/* GPA */}
                     <div className="space-y-3">
-                        <label className="text-sm font-bold text-muted-foreground">학점 (GPA)</label>
+                        <label htmlFor="gpa" className="text-sm font-bold text-muted-foreground">학점 (GPA)</label>
                         <input
                             type="number"
+                            id="gpa"
                             step="0.1"
                             className="w-full bg-muted/50 p-4 rounded-xl font-medium focus:ring-2 focus:ring-primary/20 outline-none border border-transparent focus:border-primary/50"
                             value={gpa}
@@ -256,13 +271,35 @@ export default function Settings() {
                         />
                     </div>
 
+                    <div className="space-y-3">
+                        <label htmlFor="cohortYear" className="text-sm font-bold text-muted-foreground">입학 연도 (졸업요건 기준)</label>
+                        <select
+                            id="cohortYear"
+                            className="w-full bg-muted/50 p-4 rounded-xl font-medium appearance-none focus:ring-2 focus:ring-primary/20 outline-none border border-transparent focus:border-primary/50"
+                            value={cohortYear}
+                            onChange={(e) => setCohortYear(e.target.value)}
+                        >
+                            <option value="">미설정</option>
+                            {COHORT_YEAR_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground px-1">
+                            * 과거 학번별 트랙/필수요건 검증이 필요한 경우 설정하면 더 정확합니다.
+                        </p>
+                    </div>
+
                     {/* Track */}
                     <div className="space-y-3">
                         <label className="text-sm font-bold text-muted-foreground">전공 트랙</label>
                         <div className="space-y-2">
-                            <div
+                            <button
+                                type="button"
+                                aria-pressed={!trackId}
                                 onClick={() => setTrackId('')}
-                                className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${!trackId
+                                className={`w-full p-4 rounded-xl border-2 transition-all flex items-center justify-between ${!trackId
                                     ? 'border-primary bg-primary/10'
                                     : 'border-transparent bg-muted/50 hover:bg-muted'
                                     }`}
@@ -271,12 +308,14 @@ export default function Settings() {
                                     선택 안함 (1학년 등)
                                 </span>
                                 {!trackId && <div className="w-3 h-3 rounded-full bg-primary shadow-sm" />}
-                            </div>
+                            </button>
                             {tracks.map(t => (
-                                <div
+                                <button
                                     key={t.id}
+                                    type="button"
+                                    aria-pressed={String(trackId) === String(t.id)}
                                     onClick={() => setTrackId(String(t.id))}
-                                    className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${String(trackId) === String(t.id)
+                                    className={`w-full p-4 rounded-xl border-2 transition-all flex items-center justify-between ${String(trackId) === String(t.id)
                                         ? 'border-primary bg-primary/10'
                                         : 'border-transparent bg-muted/50 hover:bg-muted'
                                         }`}
@@ -287,16 +326,17 @@ export default function Settings() {
                                     {String(trackId) === String(t.id) && (
                                         <div className="w-3 h-3 rounded-full bg-primary shadow-sm" />
                                     )}
-                                </div>
+                                </button>
                             ))}
                         </div>
                     </div>
 
-                    <div className="space-y-3 rounded-xl border border-border p-4 bg-muted/20">
-                        <p className="text-sm font-bold text-muted-foreground">메일 알림</p>
+                        <div className="space-y-3 rounded-xl border border-border p-4 bg-muted/20">
+                            <p className="text-sm font-bold text-muted-foreground">메일 알림</p>
                         <div className="space-y-2">
-                            <label className="text-xs text-muted-foreground">알림 수신 이메일</label>
+                            <label htmlFor="notificationEmail" className="text-xs text-muted-foreground">알림 수신 이메일</label>
                             <input
+                                id="notificationEmail"
                                 type="email"
                                 className="w-full bg-background p-3 rounded-xl font-medium focus:ring-2 focus:ring-primary/20 outline-none border border-border"
                                 placeholder="you@example.com"
@@ -304,8 +344,9 @@ export default function Settings() {
                                 onChange={(e) => setNotificationEmail(e.target.value)}
                             />
                         </div>
-                        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                        <label htmlFor="email-alerts-switch" className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                             <input
+                                id="email-alerts-switch"
                                 type="checkbox"
                                 checked={emailAlertsEnabled}
                                 onChange={(e) => setEmailAlertsEnabled(e.target.checked)}

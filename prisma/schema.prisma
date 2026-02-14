@@ -45,7 +45,7 @@ model UserProfile {
   notificationEmail String?
   emailAlertsEnabled Boolean @default(false)
   lastEmailedBriefingDate String?
-  dashboardState Json?
+  dashboardState String?
   track     Track?   @relation(fields: [trackId], references: [id])
   plannerProgresses PlannerProgress[]
   createdAt DateTime @default(now())
@@ -58,6 +58,7 @@ model Track {
   courses     Course[]
   users       UserProfile[]
   plannerProgresses PlannerProgress[]
+  requirements TrackCurriculumRequirement[]
 }
 
 model PlannerProgress {
@@ -100,8 +101,8 @@ model TrackCurriculumRequirement {
   id               Int       @id @default(autoincrement())
   curriculumVersionId Int
   trackId          Int
-  requiredCourses  Json
-  categoryRequirements Json?
+  requiredCourses  String
+  categoryRequirements String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 

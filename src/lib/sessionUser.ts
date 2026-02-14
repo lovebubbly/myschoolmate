@@ -27,6 +27,7 @@ function defaultProfileData() {
         grade: 1,
         income: 10,
         gpa: 0.0,
+        cohortYear: null,
     };
 }
 

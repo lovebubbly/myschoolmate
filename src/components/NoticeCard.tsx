@@ -25,7 +25,7 @@ export function NoticeCard({ notice }: { notice: NoticeProps }) {
             : 'bg-gray-100 text-gray-800';
 
     return (
-        <Link href={notice.url} target="_blank">
+        <Link href={notice.url} target="_blank" rel="noopener noreferrer" aria-label={`공지 상세 보기: ${notice.title}`} className="block">
             <Card className={cn("hover:shadow-lg transition-all duration-300 cursor-pointer border-l-4",
                 notice.category === 'Academic' ? "border-l-blue-500" : "border-l-green-500"
             )}>

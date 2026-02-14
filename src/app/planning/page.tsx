@@ -4,18 +4,38 @@
 import { useState, useEffect } from 'react';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, BookOpen, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2 } from "lucide-react";
+
+interface Profile {
+    trackId?: number | null;
+}
+
+interface TrackCourse {
+    id: string;
+    code: string;
+    name: string;
+    category: string;
+    credit: string;
+    term: string;
+    year: string;
+    requiredName: string;
+}
+
+interface Track {
+    id: number;
+    key: string;
+    name: string;
+    required: string[];
+    courses: TrackCourse[];
+    missingRequired: string[];
+    sourceYear: string | null;
+}
 
 export default function Planning() {
-    const [profile, setProfile] = useState<any>(null);
-    const [tracks, setTracks] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState('track'); // 'track' or 'all'
+    const [profile, setProfile] = useState<Profile | null>(null);
+    const [tracks, setTracks] = useState<Track[]>([]);
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    const loadData = async () => {
+    async function loadData() {
         const pRes = await fetch('/api/user/profile', { cache: 'no-store' }); // Disable cache
         const pData = await pRes.json();
         if (pData.success) {
@@ -27,13 +47,17 @@ export default function Planning() {
         if (tData.success) {
             setTracks(tData.tracks);
         }
-    };
+    }
+
+    // Initial page hydration: load profile + curriculum once.
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void loadData();
+    }, []);
 
     const currentTrack = tracks.find(t => String(t.id) === String(profile?.trackId));
-
-    // Group courses by Grade (if available) or just list them
-    // Our Crawler might have failed or saved Grade=0. Let's just list them for now.
-    const courses = currentTrack ? currentTrack.courses : [];
+    const courses = currentTrack?.courses || [];
+    const missingRequired = currentTrack?.missingRequired || [];
 
     // Fallback if no track selected
     if (!profile) return <div className="p-8">Loading...</div>;
@@ -58,30 +82,44 @@ export default function Planning() {
                         <div className="bg-blue-600 text-white p-6 rounded-[24px] shadow-lg shadow-blue-200">
                             <h2 className="text-lg opacity-80 font-medium mb-1">나의 트랙</h2>
                             <h1 className="text-3xl font-bold">{currentTrack.name}</h1>
-                            <p className="mt-4 opacity-90 text-sm">
-                                이 트랙을 이수하기 위해 권장되는 교과목들입니다.
+                            <p className="mt-4 opacity-90 text-sm leading-relaxed">
+                                필수 과목 {currentTrack.required.length}개 중 {courses.length}개를 매핑했습니다.
+                                {currentTrack.sourceYear ? ` (기준 연도: ${currentTrack.sourceYear})` : ''}
                             </p>
                         </div>
+
+                        {missingRequired.length > 0 && (
+                            <Card className="p-5 rounded-[20px] bg-amber-50 border-amber-200 text-amber-900">
+                                <p className="font-bold text-sm mb-2">
+                                    매핑되지 않은 필수 과목 {missingRequired.length}개
+                                </p>
+                                <p className="text-xs leading-relaxed">
+                                    {missingRequired.join(' / ')}
+                                </p>
+                            </Card>
+                        )}
 
                         <div className="grid gap-3">
                             {courses.length === 0 ? (
                                 <p className="text-center text-gray-400 py-10">
-                                    등록된 교과목 정보가 없습니다.<br />
-                                    (크롤링 데이터가 비어있을 수 있습니다)
+                                    현재 트랙의 매핑된 과목 정보가 없습니다.
                                 </p>
                             ) : (
-                                courses.map((c: any) => (
+                                courses.map((c) => (
                                     <div key={c.id} className="bg-white p-5 rounded-[20px] shadow-sm flex justify-between items-center group hover:scale-[1.01] transition-transform">
                                         <div className="space-y-1">
                                             <div className="flex items-center gap-2">
                                                 <span className="bg-gray-100 text-gray-500 text-[10px] px-2 py-1 rounded font-bold">
-                                                    {c.category || '전공'}
+                                                    {c.category || '전공'} · {c.term}
                                                 </span>
                                                 <span className="text-xs text-gray-400">{c.credit}</span>
                                             </div>
                                             <h3 className="font-bold text-lg text-[#333d4b] group-hover:text-blue-600 transition-colors">
                                                 {c.name}
                                             </h3>
+                                            <p className="text-xs text-gray-400">
+                                                필수명: {c.requiredName} · 코드: {c.code}
+                                            </p>
                                         </div>
                                         <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                                             <Button variant="ghost" size="icon" className="text-gray-300 hover:text-blue-500">

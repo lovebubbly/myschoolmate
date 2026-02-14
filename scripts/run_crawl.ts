@@ -4,8 +4,7 @@ import { crawlNotices } from '@/lib/crawler';
 
 async function run() {
     console.log('Starting population...');
-    await crawlNotices('cisub5_1', '407'); // Academic
-    await crawlNotices('cisub5_1', '408'); // Scholarship
+    await crawlNotices({ refreshExisting: true });
     console.log('Done.');
     process.exit(0);
 }

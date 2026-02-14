@@ -34,10 +34,16 @@ model Notice {
 
 model UserProfile {
   id        Int      @id @default(autoincrement())
+  identityKey String? @unique // e.g. "email:user@example.com" for social login identity
+  email     String?
+  displayName String?
   grade     Int      @default(1)
   income    Int      @default(10) // 0-10, 10=default/rich/unknown constraint? Let's say 10 is max. 
   gpa       Float    @default(0.0)
   trackId   Int?
+  notificationEmail String?
+  emailAlertsEnabled Boolean @default(false)
+  lastEmailedBriefingDate String?
   track     Track?   @relation(fields: [trackId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

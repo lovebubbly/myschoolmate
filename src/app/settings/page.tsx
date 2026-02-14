@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
+import { getProviders, signIn, signOut, useSession } from 'next-auth/react';
 
 interface Track {
     id: number;
@@ -13,25 +14,29 @@ interface Track {
 
 export default function Settings() {
     const router = useRouter();
+    const { data: session, status } = useSession();
     const [grade, setGrade] = useState('1');
     const [income, setIncome] = useState('10');
     const [gpa, setGpa] = useState('0.0');
     const [trackId, setTrackId] = useState<string>('');
+    const [notificationEmail, setNotificationEmail] = useState('');
+    const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(false);
     const [tracks, setTracks] = useState<Track[]>([]);
     const [saving, setSaving] = useState(false);
+    const [switchingSession, setSwitchingSession] = useState(false);
+    const [testingEmail, setTestingEmail] = useState(false);
+    const [sendingDigest, setSendingDigest] = useState(false);
+    const [mailStatus, setMailStatus] = useState<string | null>(null);
+    const [authProviders, setAuthProviders] = useState<Array<{ id: string; name: string }>>([]);
+    const [providersReady, setProvidersReady] = useState(false);
 
-    useEffect(() => {
-        fetchTracks();
-        fetchProfile();
-    }, []);
-
-    const fetchTracks = async () => {
+    async function fetchTracks() {
         const res = await fetch('/api/curriculum');
         const data = await res.json();
         if (data.success) setTracks(data.tracks);
-    };
+    }
 
-    const fetchProfile = async () => {
+    async function fetchProfile() {
         const res = await fetch('/api/user/profile', { cache: 'no-store' });
         const data = await res.json();
         if (data.success && data.profile) {
@@ -39,17 +44,49 @@ export default function Settings() {
             setIncome(String(data.profile.income));
             setGpa(String(data.profile.gpa || '0.0'));
             setTrackId(String(data.profile.trackId || ''));
+            setNotificationEmail(String(data.profile.notificationEmail || data.profile.email || ''));
+            setEmailAlertsEnabled(Boolean(data.profile.emailAlertsEnabled));
         }
-    };
+    }
+
+    async function fetchAuthProviders() {
+        try {
+            const providers = await getProviders();
+            const entries = providers ? Object.values(providers).map((provider) => ({
+                id: provider.id,
+                name: provider.name,
+            })) : [];
+            setAuthProviders(entries);
+        } catch (e) {
+            console.error('Failed to fetch auth providers:', e);
+            setAuthProviders([]);
+        }
+        setProvidersReady(true);
+    }
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void fetchTracks();
+        void fetchProfile();
+        void fetchAuthProviders();
+    }, []);
 
     const handleSave = async () => {
+        const normalizedEmail = notificationEmail.trim().toLowerCase();
+        if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+            alert('올바른 이메일 형식을 입력해주세요.');
+            return;
+        }
+
         setSaving(true);
         try {
             const payload = {
                 grade: parseInt(grade),
                 income: parseInt(income),
                 gpa: parseFloat(gpa),
-                trackId: trackId ? parseInt(trackId) : null
+                trackId: trackId ? parseInt(trackId) : null,
+                notificationEmail: normalizedEmail || null,
+                emailAlertsEnabled
             };
             console.log('Sending payload:', payload);
 
@@ -62,6 +99,7 @@ export default function Settings() {
             if (res.ok) {
                 const data = await res.json();
                 console.log('Save success:', data);
+                setMailStatus('설정이 저장되었습니다.');
                 router.refresh(); // Refresh server data
                 router.push('/');
             } else {
@@ -74,6 +112,86 @@ export default function Settings() {
             alert('저장 중 오류가 발생했습니다.');
         }
         setSaving(false);
+    };
+
+    const handleStartNewSession = async () => {
+        setSwitchingSession(true);
+        try {
+            const res = await fetch('/api/user/session', { method: 'POST' });
+            const data = await res.json();
+            if (res.ok && data.success && data.profile) {
+                setGrade(String(data.profile.grade));
+                setIncome(String(data.profile.income));
+                setGpa(String(data.profile.gpa || '0.0'));
+                setTrackId(String(data.profile.trackId || ''));
+                setNotificationEmail(String(data.profile.notificationEmail || data.profile.email || ''));
+                setEmailAlertsEnabled(Boolean(data.profile.emailAlertsEnabled));
+                router.refresh();
+                router.push('/');
+            } else {
+                alert('새 사용자 세션 생성에 실패했습니다.');
+            }
+        } catch (e) {
+            console.error('Failed to start new session:', e);
+            alert('세션 전환 중 오류가 발생했습니다.');
+        }
+        setSwitchingSession(false);
+    };
+
+    const handleSendTestEmail = async () => {
+        setTestingEmail(true);
+        setMailStatus(null);
+        try {
+            const res = await fetch('/api/alerts/email/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: notificationEmail.trim() || null }),
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                if (data.mode === 'smtp') {
+                    setMailStatus(`테스트 메일 발송 완료: ${data.to}`);
+                } else {
+                    setMailStatus('SMTP 미설정 상태입니다. 현재는 dry-run으로 확인되었습니다.');
+                }
+            } else {
+                setMailStatus(data.error || '테스트 메일 발송에 실패했습니다.');
+            }
+        } catch (e) {
+            console.error('Failed to send test email:', e);
+            setMailStatus('테스트 메일 발송 중 오류가 발생했습니다.');
+        }
+        setTestingEmail(false);
+    };
+
+    const handleSendDigest = async () => {
+        setSendingDigest(true);
+        setMailStatus(null);
+        try {
+            const res = await fetch('/api/alerts/email/digest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scope: 'me', force: true }),
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                const sent = data.summary?.sent ?? 0;
+                const dryRun = data.summary?.dryRun ?? 0;
+                if (sent > 0) {
+                    setMailStatus('오늘 브리핑 메일 발송이 완료되었습니다.');
+                } else if (dryRun > 0) {
+                    setMailStatus('SMTP 미설정 상태입니다. 오늘 브리핑 메일 dry-run만 수행되었습니다.');
+                } else {
+                    setMailStatus('발송 대상이 없거나 메일 설정이 비활성화되어 있습니다.');
+                }
+            } else {
+                setMailStatus(data.error || '오늘 브리핑 메일 발송에 실패했습니다.');
+            }
+        } catch (e) {
+            console.error('Failed to send digest email:', e);
+            setMailStatus('오늘 브리핑 메일 발송 중 오류가 발생했습니다.');
+        }
+        setSendingDigest(false);
     };
 
     return (
@@ -174,6 +292,59 @@ export default function Settings() {
                         </div>
                     </div>
 
+                    <div className="space-y-3 rounded-xl border border-border p-4 bg-muted/20">
+                        <p className="text-sm font-bold text-muted-foreground">메일 알림</p>
+                        <div className="space-y-2">
+                            <label className="text-xs text-muted-foreground">알림 수신 이메일</label>
+                            <input
+                                type="email"
+                                className="w-full bg-background p-3 rounded-xl font-medium focus:ring-2 focus:ring-primary/20 outline-none border border-border"
+                                placeholder="you@example.com"
+                                value={notificationEmail}
+                                onChange={(e) => setNotificationEmail(e.target.value)}
+                            />
+                        </div>
+                        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={emailAlertsEnabled}
+                                onChange={(e) => setEmailAlertsEnabled(e.target.checked)}
+                                className="h-4 w-4 rounded border-border"
+                            />
+                            신규 브리핑 메일 알림 받기
+                        </label>
+                        <div className="flex flex-col gap-2 md:flex-row">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={handleSendTestEmail}
+                                disabled={testingEmail || !notificationEmail.trim()}
+                                className="h-10 rounded-xl"
+                            >
+                                {testingEmail ? '테스트 중...' : '테스트 메일 보내기'}
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={handleSendDigest}
+                                disabled={sendingDigest || !emailAlertsEnabled || !notificationEmail.trim()}
+                                className="h-10 rounded-xl"
+                            >
+                                {sendingDigest ? '발송 중...' : '오늘 브리핑 메일 보내기'}
+                            </Button>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                            SMTP 키가 없으면 테스트/발송은 dry-run으로 동작합니다.
+                        </p>
+                        {mailStatus && (
+                            <p className="text-xs font-medium text-primary">
+                                {mailStatus}
+                            </p>
+                        )}
+                    </div>
+
                     <Button
                         size="lg"
                         onClick={handleSave}
@@ -182,6 +353,62 @@ export default function Settings() {
                     >
                         {saving ? '저장 중...' : '저장하기'}
                     </Button>
+                    <Button
+                        variant="outline"
+                        size="lg"
+                        onClick={handleStartNewSession}
+                        disabled={switchingSession || status === 'authenticated'}
+                        className="w-full h-12 rounded-[16px] text-sm font-bold"
+                    >
+                        {switchingSession ? '전환 중...' : status === 'authenticated' ? '소셜 로그인 사용 중' : '새 사용자 세션 시작'}
+                    </Button>
+                    <div className="rounded-xl border border-border p-4 bg-muted/20 space-y-3">
+                        <p className="text-sm font-bold">
+                            {status === 'authenticated' ? '소셜 로그인 연결됨' : '소셜 로그인'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                            {status === 'authenticated'
+                                ? `${session?.user?.email || '계정 정보 없음'} 계정으로 로그인되어 있습니다.`
+                                : authProviders.length > 0
+                                    ? 'Google/GitHub 로그인으로 사용자 프로필을 기기 간 동기화할 수 있습니다.'
+                                    : '현재는 익명 모드로 동작합니다. API 키 설정 후 소셜 로그인을 사용할 수 있습니다.'}
+                        </p>
+                        <div className="flex gap-2">
+                            {status === 'authenticated' ? (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => signOut({ callbackUrl: '/settings' })}
+                                    className="h-9 rounded-lg"
+                                >
+                                    로그아웃
+                                </Button>
+                            ) : (
+                                authProviders.length > 0 ? (
+                                    authProviders.map((provider) => (
+                                        <Button
+                                            key={provider.id}
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => signIn(provider.id, { callbackUrl: '/settings' })}
+                                            className="h-9 rounded-lg"
+                                        >
+                                            {provider.name} 로그인
+                                        </Button>
+                                    ))
+                                ) : (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled
+                                        className="h-9 rounded-lg"
+                                    >
+                                        {providersReady ? '소셜 로그인 준비중' : '로그인 설정 확인중'}
+                                    </Button>
+                                )
+                            )}
+                        </div>
+                    </div>
                     <p className="text-center text-xs text-muted-foreground mt-4 leading-relaxed bg-muted/30 p-3 rounded-xl">
                         🔒 입력하신 정보는 <b>현재 브라우저</b>에 안전하게 저장되어 재방문 시에도 유지되며, <b>공지사항 필터링</b> 목적으로만 사용됩니다.<br />
                         (단, AI 브리핑 생성을 위해 익명화된 정보가 Gemini 서버로 전송될 수 있습니다)

@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, ArrowRight, Calendar, Sparkles, SlidersHorizontal, Map, Settings as SettingsIcon, LayoutGrid, List } from "lucide-react";
+import { RefreshCw, ArrowRight, Calendar, Sparkles, SlidersHorizontal, Map as MapIcon, Settings as SettingsIcon, LayoutGrid, List, BellRing, CheckCheck, Clock3 } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -41,7 +41,65 @@ interface Notice {
   isPinned: boolean;
 }
 
-function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Notice, filterProfile: any, onOpen: (n: Notice) => void, index?: number }) {
+interface InboxItem {
+  id: string;
+  noticeId: number;
+  type: 'NEW_NOTICE' | 'DEADLINE_SOON';
+  title: string;
+  subtitle: string;
+  priority: number;
+}
+
+interface FilterProfile {
+  grade: number;
+  income: number;
+  gpa: number;
+}
+
+interface LoadedProfile {
+  grade: number;
+  income: number;
+  gpa: number;
+}
+
+const READ_NOTICE_IDS_KEY = 'dashboard-read-notice-ids-v1';
+const NOTICE_BASELINE_KEY = 'dashboard-notice-baseline-v1';
+
+function parseDeadline(deadline?: string | null): Date | null {
+  if (!deadline) return null;
+
+  const digitsOnly = deadline.replace(/\D/g, '');
+  const now = new Date();
+  let year = now.getFullYear();
+  let month = 0;
+  let day = 0;
+
+  if (digitsOnly.length >= 8) {
+    year = Number(digitsOnly.slice(0, 4));
+    month = Number(digitsOnly.slice(4, 6));
+    day = Number(digitsOnly.slice(6, 8));
+  } else if (digitsOnly.length === 4) {
+    month = Number(digitsOnly.slice(0, 2));
+    day = Number(digitsOnly.slice(2, 4));
+  } else {
+    return null;
+  }
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  const parsed = new Date(year, month - 1, day, 23, 59, 59, 999);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function getDday(deadline: Date) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(deadline);
+  target.setHours(0, 0, 0, 0);
+  return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Notice, filterProfile: FilterProfile, onOpen: (n: Notice) => void, index?: number }) {
   // Helper for translating categories/types
   const translateType = (type: string) => {
     const map: Record<string, string> = {
@@ -62,13 +120,13 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
 
   return (
     <motion.div
+      data-testid="notice-card"
       layout
       initial={{ opacity: 0, y: 30, scale: 0.95 }}
-      whileInView={{ opacity: 1, y: 0, scale: 1 }}
-      viewport={{ once: true, margin: "-50px" }}
-      exit={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.95 }}
       transition={{
-        duration: 0.5,
+        duration: 0.35,
         delay: index * 0.05,
         ease: [0.22, 1, 0.36, 1]
       }}
@@ -170,8 +228,8 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="w-[95vw] md:w-[800px] lg:w-[900px] max-w-[95vw] md:max-w-[800px] lg:max-w-[900px] max-h-[90vh] overflow-y-auto overflow-x-hidden rounded-[32px] p-0 border-none bg-card/95 backdrop-blur-xl shadow-2xl">
-        <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-md p-6 border-b border-border/50 flex justify-between items-start">
+      <DialogContent className="w-[95vw] md:w-[800px] lg:w-[900px] max-w-[95vw] md:max-w-[900px] h-[90vh] rounded-[32px] p-0 border-none bg-card/95 backdrop-blur-xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="sticky top-0 z-10 bg-card/80 backdrop-blur-md p-6 border-b border-border/50 flex justify-between items-start shrink-0">
           <div className="space-y-1 pr-8">
             <div className="flex items-center gap-2 mb-2">
               <span className="px-2 py-1 rounded bg-primary/10 text-primary text-[10px] font-bold uppercase">
@@ -188,56 +246,68 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
           </Button>
         </div>
 
-        <div className="p-6 pt-2 space-y-6">
-          {notice.summary && (
-            <div className="bg-primary/5 rounded-2xl p-5 border border-primary/10">
-              <h4 className="text-sm font-bold text-primary mb-2 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4" />
-                <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-red-500 bg-clip-text text-transparent">
-                  AI 요약
-                </span>
-              </h4>
-              <p className="text-[15px] leading-relaxed text-foreground/90">
-                {notice.summary}
-              </p>
+        <div className="px-6 pt-2 pb-6 space-y-6 overflow-y-auto overflow-x-hidden notice-dialog-scroll flex-1 min-h-0">
+          <div className="space-y-6">
+            {notice.summary && (
+              <div className="bg-primary/5 rounded-2xl p-5 border border-primary/10">
+                <h4 className="text-sm font-bold text-primary mb-2 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4" />
+                  <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-red-500 bg-clip-text text-transparent">
+                    AI 요약
+                  </span>
+                </h4>
+                <p className="text-[15px] leading-relaxed text-foreground/90">
+                  {notice.summary}
+                </p>
+              </div>
+            )}
+
+            <div className="text-foreground/80 leading-8 text-[15px] prose dark:prose-invert max-w-none">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkBreaks]}
+                components={{
+                  strong: ({ node, ...props }) => <span className="font-bold text-primary" {...props} />,
+                  p: ({ node, ...props }) => <p className="mb-4 last:mb-0" {...props} />,
+                  ul: ({ node, ...props }) => <ul className="list-disc ml-5 space-y-2 my-4" {...props} />,
+                  li: ({ node, ...props }) => <li {...props} />,
+                  table: ({ node, ...props }) => (
+                    <div className="overflow-x-auto max-w-full my-6 rounded-2xl border border-border shadow-sm bg-card/50">
+                      <table className="w-full divide-y divide-border text-[13px] border-collapse" {...props} />
+                    </div>
+                  ),
+                  thead: ({ node, ...props }) => <thead className="bg-muted/50 border-b border-border" {...props} />,
+                  th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap bg-muted/10 min-w-[120px]" {...props} />,
+                  td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[120px] whitespace-pre-wrap break-words leading-normal align-top text-xs md:text-[13px]" {...props} />,
+                  a: ({ node, ...props }) => <a className="text-primary font-bold hover:underline underline-offset-4 break-all" {...props} target="_blank" />,
+                  h1: ({ node, ...props }) => <h1 className="text-2xl font-bold mb-4 mt-8 text-foreground" {...props} />,
+                  h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-6 text-foreground border-b border-border pb-2" {...props} />,
+                  h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-2 mt-4 text-foreground" {...props} />,
+                }}
+              >
+                {notice.content || "본문 내용이 없습니다. 원문을 확인해주세요."}
+              </ReactMarkdown>
             </div>
-          )}
 
-          <div className="text-foreground/80 leading-8 text-[15px] prose dark:prose-invert max-w-none">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkBreaks]}
-              components={{
-                strong: ({ node, ...props }) => <span className="font-bold text-primary" {...props} />,
-                p: ({ node, ...props }) => <p className="mb-4 last:mb-0" {...props} />,
-                ul: ({ node, ...props }) => <ul className="list-disc ml-5 space-y-2 my-4" {...props} />,
-                li: ({ node, ...props }) => <li {...props} />,
-                table: ({ node, ...props }) => (
-                  <div className="overflow-x-auto max-w-full my-6 rounded-2xl border border-border shadow-sm bg-card/50">
-                    <table className="w-full divide-y divide-border text-[13px] border-collapse" {...props} />
-                  </div>
-                ),
-                thead: ({ node, ...props }) => <thead className="bg-muted/50 border-b border-border" {...props} />,
-                th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap bg-muted/10 min-w-[120px]" {...props} />,
-                td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[120px] max-w-[400px] break-keep leading-normal align-top text-xs md:text-[13px]" {...props} />,
-                a: ({ node, ...props }) => <a className="text-primary font-bold hover:underline underline-offset-4 break-all" {...props} target="_blank" />,
-                h1: ({ node, ...props }) => <h1 className="text-2xl font-bold mb-4 mt-8 text-foreground" {...props} />,
-                h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-6 text-foreground border-b border-border pb-2" {...props} />,
-                h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-2 mt-4 text-foreground" {...props} />,
-              }}
-            >
-              {notice.content || "본문 내용이 없습니다. 원문을 확인해주세요."}
-            </ReactMarkdown>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 mt-8 pb-4">
-            <Button variant="outline" className="h-12 rounded-xl font-bold" onClick={() => window.open(notice.url, '_blank')}>
-              원문 보러가기 <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-            <Button className="h-12 rounded-xl font-bold bg-primary text-primary-foreground" onClick={onClose}>
-              닫기
-            </Button>
+            <div className="grid grid-cols-2 gap-4 mt-8 pb-4">
+              <Button variant="outline" className="h-12 rounded-xl font-bold" onClick={() => window.open(notice.url, '_blank')}>
+                원문 보러가기 <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+              <Button className="h-12 rounded-xl font-bold bg-primary text-primary-foreground" onClick={onClose}>
+                닫기
+              </Button>
+            </div>
           </div>
         </div>
+        <style jsx>{`
+          .notice-dialog-scroll {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+          }
+          .notice-dialog-scroll::-webkit-scrollbar {
+            width: 0;
+            height: 0;
+          }
+        `}</style>
       </DialogContent>
     </Dialog>
   );
@@ -259,8 +329,8 @@ export default function Home() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const [showFilters, setShowFilters] = useState(false);
-  const [filterProfile, setFilterProfile] = useState<{ grade: number; income: number; gpa: number }>({ grade: 0, income: 11, gpa: 0 }); // Default income 11 (All)
-  const [loadedProfile, setLoadedProfile] = useState<any>(null);
+  const [filterProfile, setFilterProfile] = useState<FilterProfile>({ grade: 0, income: 11, gpa: 0 }); // Default income 11 (All)
+  const [loadedProfile, setLoadedProfile] = useState<LoadedProfile | null>(null);
 
   const [isPinnedExpanded, setIsPinnedExpanded] = useState(false);
 
@@ -268,36 +338,126 @@ export default function Home() {
   const ITEMS_PER_PAGE = 12;
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_PAGE);
 
+  // Inbox State
+  const [readNoticeIds, setReadNoticeIds] = useState<number[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const savedReadNoticeIds = localStorage.getItem(READ_NOTICE_IDS_KEY);
+    if (!savedReadNoticeIds) return [];
+    try {
+      const parsed = JSON.parse(savedReadNoticeIds);
+      return Array.isArray(parsed) ? parsed.filter((value) => Number.isInteger(value)) : [];
+    } catch {
+      return [];
+    }
+  });
+
   // Widget Reordering State
-  const [widgetOrder, setWidgetOrder] = useState<string[]>(['cafeteria', 'notices']);
-  const [enabledWidgets, setEnabledWidgets] = useState<Record<string, boolean>>({
-    cafeteria: true,
-    notices: true
+  const [widgetOrder, setWidgetOrder] = useState<string[]>(() => {
+    const fallback = ['inbox', 'cafeteria', 'notices'];
+    if (typeof window === 'undefined') return fallback;
+
+    const savedOrder = localStorage.getItem('dashboard-widget-order');
+    if (!savedOrder) return fallback;
+
+    try {
+      const parsedOrder = JSON.parse(savedOrder);
+      if (!Array.isArray(parsedOrder)) return fallback;
+      const normalized = fallback.filter((id) => parsedOrder.includes(id));
+      const missing = fallback.filter((id) => !normalized.includes(id));
+      return [...normalized, ...missing];
+    } catch {
+      return fallback;
+    }
+  });
+  const [enabledWidgets, setEnabledWidgets] = useState<Record<string, boolean>>(() => {
+    const fallback = { inbox: true, cafeteria: true, notices: true };
+    if (typeof window === 'undefined') return fallback;
+
+    const savedEnabled = localStorage.getItem('dashboard-enabled-widgets');
+    if (!savedEnabled) return fallback;
+
+    try {
+      const parsedEnabled = JSON.parse(savedEnabled);
+      if (!parsedEnabled || typeof parsedEnabled !== 'object') return fallback;
+      return {
+        inbox: parsedEnabled.inbox ?? true,
+        cafeteria: parsedEnabled.cafeteria ?? true,
+        notices: parsedEnabled.notices ?? true,
+      };
+    } catch {
+      return fallback;
+    }
   });
   const [isStyleDialogOpen, setIsStyleDialogOpen] = useState(false);
 
-  useEffect(() => {
-    loadData();
-    // Load widget order from localStorage
-    const savedOrder = localStorage.getItem('dashboard-widget-order');
-    if (savedOrder) {
-      try {
-        setWidgetOrder(JSON.parse(savedOrder));
-      } catch (e) {
-        console.error('Failed to parse widget order', e);
+  async function fetchBriefing() {
+    setBriefingLoading(true);
+    try {
+      const res = await fetch('/api/briefing');
+      const data = await res.json();
+      if (data.success) {
+        setBriefing(data.briefing);
       }
+    } catch (e) {
+      console.error(e);
     }
+    setBriefingLoading(false);
+  }
 
-    // Load enabled widgets from localStorage
-    const savedEnabled = localStorage.getItem('dashboard-enabled-widgets');
-    if (savedEnabled) {
-      try {
-        setEnabledWidgets(JSON.parse(savedEnabled));
-      } catch (e) {
-        console.error('Failed to parse enabled widgets', e);
+  async function fetchProfile() {
+    try {
+      const res = await fetch('/api/user/profile', { cache: 'no-store' });
+      const data = await res.json();
+      if (data.success && data.profile) {
+        const normalizedProfile: LoadedProfile = {
+          grade: Number(data.profile.grade) || 0,
+          income: Number(data.profile.income) || 11,
+          gpa: Number(data.profile.gpa) || 0,
+        };
+        setLoadedProfile(normalizedProfile);
+        // Auto-apply filters as requested
+        setFilterProfile({
+          grade: normalizedProfile.grade,
+          income: normalizedProfile.income,
+          gpa: normalizedProfile.gpa
+        });
+        fetchBriefing();
       }
+    } catch (e) {
+      console.error(e);
     }
+  }
+
+  async function loadNotices() {
+    try {
+      const res = await fetch('/api/notices');
+      const data = await res.json();
+      if (data.success) {
+        const incomingNotices: Notice[] = data.notices || [];
+        setNotices(incomingNotices);
+
+        // First-run baseline: treat currently loaded notices as read,
+        // so inbox only highlights newly arrived notices afterward.
+        if (incomingNotices.length > 0 && localStorage.getItem(NOTICE_BASELINE_KEY) !== '1') {
+          setReadNoticeIds((prev) => Array.from(new Set([...prev, ...incomingNotices.map((notice) => notice.id)])));
+          localStorage.setItem(NOTICE_BASELINE_KEY, '1');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load notices:', error);
+    }
+  }
+
+  useEffect(() => {
+    void (async () => {
+      await fetchProfile();
+      await loadNotices();
+    })();
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(READ_NOTICE_IDS_KEY, JSON.stringify(readNoticeIds));
+  }, [readNoticeIds]);
 
   const saveWidgetOrder = (newOrder: string[]) => {
     setWidgetOrder(newOrder);
@@ -323,77 +483,29 @@ export default function Home() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisibleCount(ITEMS_PER_PAGE);
   }, [selectedCategory, searchQuery, filterProfile]);
 
-  const loadData = async () => {
-    await fetchProfile();
-    await loadNotices();
-  };
-
-  const fetchProfile = async () => {
-    try {
-      const res = await fetch('/api/user/profile', { cache: 'no-store' });
-      const data = await res.json();
-      if (data.success && data.profile) {
-        setLoadedProfile(data.profile);
-        // Auto-apply filters as requested
-        setFilterProfile({
-          grade: data.profile.grade,
-          income: data.profile.income,
-          gpa: data.profile.gpa || 0
-        });
-        fetchBriefing();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const fetchBriefing = async () => {
-    setBriefingLoading(true);
-    try {
-      const res = await fetch('/api/briefing');
-      const data = await res.json();
-      if (data.success) {
-        setBriefing(data.briefing);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    setBriefingLoading(false);
-  };
-
-  const loadNotices = async () => {
-    try {
-      const res = await fetch('/api/notices');
-      const data = await res.json();
-      if (data.success) {
-        setNotices(data.notices);
-      }
-    } catch (error) {
-      console.error('Failed to load notices:', error);
-    }
-  };
-
-  const refreshNotices = async () => {
+  async function refreshNotices() {
     setLoading(true);
     try {
       const res = await fetch('/api/notices/crawl', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        setNotices(data.notices);
+        setNotices(data.notices || []);
         fetchBriefing();
       }
     } catch (error) {
       console.error('Failed to refresh:', error);
     }
     setLoading(false);
-  };
+  }
 
   const handleOpenNotice = (notice: Notice) => {
     setSelectedNotice(notice);
     setIsDialogOpen(true);
+    setReadNoticeIds((prev) => (prev.includes(notice.id) ? prev : [...prev, notice.id]));
   };
 
   // Filter & Search Logic
@@ -457,6 +569,50 @@ export default function Home() {
 
   const pinnedNotices = filteredNotices.filter(n => n.isPinned);
   const regularNotices = filteredNotices.filter(n => !n.isPinned);
+  const noticeLookup = useMemo(() => new Map(notices.map((notice) => [notice.id, notice])), [notices]);
+  const readNoticeSet = useMemo(() => new Set(readNoticeIds), [readNoticeIds]);
+  const unreadNoticeCount = notices.filter((notice) => !readNoticeSet.has(notice.id)).length;
+
+  const inboxItems = useMemo(() => {
+    const items: InboxItem[] = [];
+
+    for (const notice of notices) {
+      if (!readNoticeSet.has(notice.id)) {
+        items.push({
+          id: `new-${notice.id}`,
+          noticeId: notice.id,
+          type: 'NEW_NOTICE',
+          title: notice.title,
+          subtitle: '새 공지',
+          priority: 2,
+        });
+      }
+
+      const deadline = parseDeadline(notice.deadline);
+      if (!deadline) continue;
+
+      const dday = getDday(deadline);
+      if (dday >= 0 && dday <= 3) {
+        items.push({
+          id: `deadline-${notice.id}`,
+          noticeId: notice.id,
+          type: 'DEADLINE_SOON',
+          title: notice.title,
+          subtitle: dday === 0 ? '오늘 마감' : `마감 D-${dday}`,
+          priority: 1,
+        });
+      }
+    }
+
+    return items
+      .sort((a, b) => a.priority - b.priority || b.noticeId - a.noticeId)
+      .slice(0, 12);
+  }, [notices, readNoticeSet]);
+
+  const urgentInboxCount = inboxItems.filter((item) => item.type === 'DEADLINE_SOON').length;
+  const markAllAsRead = () => {
+    setReadNoticeIds(Array.from(new Set([...readNoticeIds, ...notices.map((notice) => notice.id)])));
+  };
 
   return (
     <div className="min-h-screen font-sans bg-[url('/background.png')] bg-cover bg-center bg-fixed text-foreground">
@@ -471,7 +627,15 @@ export default function Home() {
             transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
           >
             <div className="flex justify-between items-center">
-              <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground via-foreground to-foreground/70 bg-clip-text">내 학교 생활 🎓</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground via-foreground to-foreground/70 bg-clip-text">내 학교 생활 🎓</h1>
+                {(unreadNoticeCount > 0 || urgentInboxCount > 0) && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-400/30">
+                    <BellRing className="w-3.5 h-3.5" />
+                    알림 {inboxItems.length}개
+                  </span>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Button
                   variant="ghost"
@@ -482,7 +646,7 @@ export default function Home() {
                   <Layout className="w-5 h-5" />
                 </Button>
                 <Button variant="ghost" size="icon" onClick={() => window.location.href = '/planning'} className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform">
-                  <Map className="w-5 h-5" />
+                  <MapIcon className="w-5 h-5" />
                 </Button>
                 <Button variant="ghost" size="icon" onClick={() => window.location.href = '/settings'} className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform">
                   <SettingsIcon className="w-5 h-5" />
@@ -518,16 +682,27 @@ export default function Home() {
                           className="flex items-center justify-between p-4 rounded-2xl bg-muted/30 border border-border/50 group hover:bg-muted/50 transition-colors"
                         >
                           <div className="flex items-center gap-3">
-                            <motion.div
-                              whileHover={{ scale: 1.1, rotate: 5 }}
-                              className="p-2 bg-background rounded-lg shadow-sm"
-                            >
-                              {id === 'cafeteria' ? '🍱' : '📢'}
-                            </motion.div>
-                            <div>
-                              <span className="font-bold text-sm">{id === 'cafeteria' ? '오늘의 학식' : '공지사항'}</span>
-                              <p className="text-[10px] text-muted-foreground text-nowrap">드래그하거나 버튼으로 이동 가능</p>
-                            </div>
+                            {(() => {
+                              const widgetMeta = id === 'inbox'
+                                ? { emoji: '🔔', label: '알림함' }
+                                : id === 'cafeteria'
+                                  ? { emoji: '🍱', label: '오늘의 학식' }
+                                  : { emoji: '📢', label: '공지사항' };
+                              return (
+                                <>
+                                  <motion.div
+                                    whileHover={{ scale: 1.1, rotate: 5 }}
+                                    className="p-2 bg-background rounded-lg shadow-sm"
+                                  >
+                                    {widgetMeta.emoji}
+                                  </motion.div>
+                                  <div>
+                                    <span className="font-bold text-sm">{widgetMeta.label}</span>
+                                    <p className="text-[10px] text-muted-foreground text-nowrap">드래그하거나 버튼으로 이동 가능</p>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
 
                           <div className="flex items-center gap-2">
@@ -569,7 +744,7 @@ export default function Home() {
                   </div>
 
                   <p className="text-[11px] text-center text-muted-foreground pt-2">
-                    * '오늘의 브리핑'은 항상 최상단에 고정됩니다.
+                    * &apos;오늘의 브리핑&apos;은 항상 최상단에 고정됩니다.
                   </p>
                 </motion.div>
                 <motion.div
@@ -726,7 +901,84 @@ export default function Home() {
                     <GripVertical className="w-5 h-5 text-muted-foreground" />
                   </div>
 
-                  {widgetId === 'cafeteria' ? (
+                  {widgetId === 'inbox' ? (
+                    <motion.section
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.45, delay: 0.15 }}
+                    >
+                      <Card className="p-6 rounded-[24px] border-border/50 bg-card/70 backdrop-blur-md shadow-sm">
+                        <div className="flex items-center justify-between gap-3 mb-4">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-300">
+                              <BellRing className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h2 className="text-lg font-bold">알림함</h2>
+                              <p className="text-xs text-muted-foreground">
+                                새 공지와 마감 임박 공지를 보여줍니다.
+                              </p>
+                            </div>
+                          </div>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={markAllAsRead}
+                            disabled={unreadNoticeCount === 0}
+                            className="rounded-xl"
+                          >
+                            <CheckCheck className="w-4 h-4 mr-1.5" />
+                            모두 읽음
+                          </Button>
+                        </div>
+
+                        <div className="flex items-center gap-2 mb-4 text-xs">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold">
+                            새 공지 {unreadNoticeCount}개
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold">
+                            <Clock3 className="w-3 h-3" />
+                            마감 임박 {urgentInboxCount}개
+                          </span>
+                        </div>
+
+                        {inboxItems.length === 0 ? (
+                          <div className="py-10 text-center text-muted-foreground text-sm">
+                            새로운 알림이 없습니다.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {inboxItems.map((item) => {
+                              const linkedNotice = noticeLookup.get(item.noticeId);
+                              if (!linkedNotice) return null;
+
+                              return (
+                                <button
+                                  key={item.id}
+                                  className="w-full text-left p-3 rounded-xl border border-border/50 bg-background/60 hover:bg-muted/50 transition-colors"
+                                  onClick={() => handleOpenNotice(linkedNotice)}
+                                >
+                                  <div className="flex items-center gap-2 mb-1.5">
+                                    <span
+                                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${item.type === 'DEADLINE_SOON'
+                                        ? 'text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/20'
+                                        : 'text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20'
+                                        }`}
+                                    >
+                                      {item.type === 'DEADLINE_SOON' ? '마감 임박' : '새 공지'}
+                                    </span>
+                                    <span className="text-[11px] text-muted-foreground">{item.subtitle}</span>
+                                  </div>
+                                  <p className="text-sm font-semibold text-foreground line-clamp-1">{item.title}</p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </Card>
+                    </motion.section>
+                  ) : widgetId === 'cafeteria' ? (
                     <motion.div
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -802,9 +1054,9 @@ export default function Home() {
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
                                 onClick={() => setIsPinnedExpanded(!isPinnedExpanded)}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all duration-300 ${isPinnedExpanded ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-muted/50 border-border/50 text-muted-foreground'}`}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all duration-300 ${isPinnedExpanded ? 'bg-primary/12 border-primary/35 text-primary shadow-sm ring-1 ring-primary/20' : 'bg-background/85 border-foreground/15 text-foreground/90 hover:bg-background/100 hover:border-primary/30 hover:text-primary/90'}`}
                               >
-                                <Sparkles className={`w-3.5 h-3.5 ${isPinnedExpanded ? 'text-primary' : 'text-muted-foreground'}`} />
+                                <Sparkles className={`w-3.5 h-3.5 ${isPinnedExpanded ? 'text-primary' : 'text-foreground/80'}`} />
                                 <span className="text-xs font-bold">고정 공지 {pinnedNotices.length}개</span>
                                 <motion.span
                                   animate={{ rotate: isPinnedExpanded ? 180 : 0 }}
@@ -817,25 +1069,27 @@ export default function Home() {
                           </div>
 
                           <div className="flex gap-2 flex-wrap">
-                            <div className="bg-muted p-1 rounded-full flex gap-1 border border-border">
-                              <Button
-                                variant={layout === 'grid' ? 'default' : 'ghost'}
-                                size="sm"
-                                onClick={() => setLayout('grid')}
-                                className="rounded-full h-8 px-4"
-                              >
-                                <LayoutGrid className="w-4 h-4 mr-1.5" />
-                                카드
-                              </Button>
-                              <Button
-                                variant={layout === 'list' ? 'default' : 'ghost'}
-                                size="sm"
-                                onClick={() => setLayout('list')}
-                                className="rounded-full h-8 px-4"
-                              >
-                                <List className="w-4 h-4 mr-1.5" />
-                                리스트
-                              </Button>
+                            <div className="flex gap-1 p-1.5 bg-muted/60 dark:bg-muted/40 rounded-full border border-border/60 dark:border-border/40 backdrop-blur-sm shadow-sm">
+                              {([
+                                { id: 'grid', label: '카드', Icon: LayoutGrid },
+                                { id: 'list', label: '리스트', Icon: List },
+                              ] as const).map(({ id, label, Icon }) => (
+                                <button
+                                  key={id}
+                                  onClick={() => setLayout(id)}
+                                  className={`relative h-8 px-4 rounded-full text-sm font-bold transition-colors z-10 inline-flex items-center gap-1.5 ${layout === id ? 'text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                                >
+                                  {layout === id && (
+                                    <motion.span
+                                      layoutId="layoutModePill"
+                                      className="absolute inset-0 bg-primary rounded-full -z-10 shadow-md"
+                                      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                                    />
+                                  )}
+                                  <Icon className="w-4 h-4" />
+                                  {label}
+                                </button>
+                              ))}
                             </div>
 
                             <Button
@@ -950,13 +1204,13 @@ export default function Home() {
                             transition={{ duration: 0.3, ease: 'easeInOut' }}
                             className="overflow-hidden mb-2"
                           >
-                            <div className={`grid gap-4 ${layout === 'grid' ? "md:grid-cols-2" : "flex flex-col"}`}>
+                          <div className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}>
                               {pinnedNotices.map((notice, i) => (
                                 <div key={notice.id} className="relative">
                                   <div className="absolute top-3 right-3 z-10">
                                     <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[9px] font-bold border border-primary/20 backdrop-blur-sm">고정</span>
                                   </div>
-                                  <NoticeCard notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i} />
+                                  <NoticeCard key={`${notice.id}-${layout}`} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i} />
                                 </div>
                               ))}
                             </div>
@@ -965,15 +1219,20 @@ export default function Home() {
                         )}
                       </AnimatePresence>
 
-                      <div
-                        className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}
-                      >
-                        <AnimatePresence mode='popLayout'>
+                      <AnimatePresence mode='wait' initial={false}>
+                        <motion.div
+                          key={`regular-notices-${layout}`}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -8 }}
+                          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                          className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}
+                        >
                           {regularNotices.slice(0, visibleCount).map((notice, i) => (
-                            <NoticeCard key={notice.id} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i % 12} />
+                            <NoticeCard key={`${notice.id}-${layout}`} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i % 12} />
                           ))}
-                        </AnimatePresence>
-                      </div>
+                        </motion.div>
+                      </AnimatePresence>
 
                       {/* Load More Button */}
                       {visibleCount < regularNotices.length && (

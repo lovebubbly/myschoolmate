@@ -16,11 +16,12 @@
 
 | 기능 | 설명 |
 |------|------|
-| **🔔 실시간 공지 크롤링** | 학과 게시판(학사/장학, 일반, 취업, 소식)에서 최신 공지사항을 자동 수집 |
+| **🔔 실시간 공지 크롤링** | 학과 게시판(학사/장학, 일반, 취업, 소식)에서 최신 공지사항을 자동 수집 (오래된 경우 자동 갱신) |
 | **🤖 AI 맞춤 브리핑** | Gemini AI를 활용하여 사용자 프로필 기반 맞춤형 소식 브리핑 |
 | **👤 스마트 필터링** | 학년, 소득분위, 학점 기반 장학금/공지 자동 필터링 |
 | **📊 AI 분석** | 장학금 유형, 지원 마감일, 신청 자격 등을 AI가 자동 추출 |
 | **📌 중요 공지 핀 고정** | 상단 고정 공지를 접이식 섹션으로 분리하여 관리 |
+| **🔔 인앱 알림함** | 신규 공지 및 마감 임박 공지를 대시보드 알림함에서 확인 |
 | **🗺️ 커리큘럼 플래너** | 전공 트랙별 수강 계획 수립 지원 |
 | **🍽️ 주간 식단표** | 교내 식당(한빛/별빛/은하수) 주간 메뉴 및 운영 시간 확인 |
 
@@ -114,7 +115,23 @@ npm install
 ```env
 DATABASE_URL="file:./dev.db"
 GEMINI_API_KEY="your-gemini-api-key"
+AUTH_SECRET="your-random-long-secret"
+GOOGLE_CLIENT_ID="your-google-client-id"
+GOOGLE_CLIENT_SECRET="your-google-client-secret"
+# Optional
+GITHUB_ID="your-github-client-id"
+GITHUB_SECRET="your-github-client-secret"
+SMTP_HOST="smtp.example.com"
+SMTP_PORT="587"
+SMTP_USER="smtp-username"
+SMTP_PASS="smtp-password"
+SMTP_FROM="MySchoolMate <no-reply@example.com>"
+EMAIL_ALERT_ADMIN_TOKEN="set-only-if-you-need-scope-all"
+# Optional: SMTP_PORT=465이면 자동 secure, 또는 SMTP_SECURE=true
 ```
+
+소셜 로그인 키를 아직 설정하지 않아도 앱은 익명 세션 모드로 동작합니다.
+SMTP를 설정하지 않아도 메일 API는 dry-run 모드로 동작합니다.
 
 ### 3. 데이터베이스 초기화
 ```bash
@@ -173,8 +190,10 @@ myschoolmate/
 | POST | `/api/notices/crawl` | 새 공지 크롤링 실행 |
 | GET | `/api/briefing` | AI 브리핑 생성 |
 | GET/POST | `/api/user/profile` | 사용자 프로필 조회/저장 |
+| POST | `/api/alerts/email/test` | 메일 채널 테스트 발송 (SMTP 없으면 dry-run) |
+| POST | `/api/alerts/email/digest` | 오늘 브리핑 메일 발송 (기본 `scope=me`) |
 | GET | `/api/curriculum` | 전공 트랙 목록 조회 |
-| GET | `/api/cafeteria` | 식단 정보 조회 |
+| GET | `/api/menu` | 식단 정보 조회 |
 
 ---
 

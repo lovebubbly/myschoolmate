@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google"; // Using Inter for "premium" feel as requested
 import "./globals.css";
 import { NavBar } from "@/components/NavBar";
+import { AuthSessionProvider } from "@/components/AuthSessionProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -28,13 +29,13 @@ export default function RootLayout({
           attribute="class"
           defaultTheme="system"
           enableSystem
-          disableTransitionOnChange
         >
-          <NavBar />
-          {children}
+          <AuthSessionProvider>
+            <NavBar />
+            {children}
+          </AuthSessionProvider>
         </ThemeProvider>
       </body>
     </html>
   );
 }
-

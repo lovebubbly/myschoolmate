@@ -1,7 +1,8 @@
 
 import { chromium, Page } from 'playwright';
 import { prisma } from '@/lib/prisma';
-import { analyzeNotice, formatNoticeContent } from './gemini';
+import { analyzeNotice } from './gemini';
+import { extractApplicationDeadlineFromText } from '@/lib/deadlineExtractor';
 
 export interface NoticeData {
     title: string;
@@ -25,12 +26,13 @@ const BOARDS = [
     { name: 'News', url: 'https://inform.chungbuk.ac.kr/cisub5_4' }
 ];
 
-export async function crawlNotices(targetBoard?: string, targetPage?: string): Promise<NoticeData[]> {
+export async function crawlNotices(options?: { refreshExisting?: boolean }): Promise<NoticeData[]> {
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     const page = await context.newPage();
+    const refreshExisting = options?.refreshExisting === true;
 
-    let allNotices: NoticeData[] = [];
+    const allNotices: NoticeData[] = [];
 
     // Helper for navigation with retries
     async function safeNavigate(page: Page, url: string, retries = 2) {
@@ -43,6 +45,97 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                 console.log(`Retry navigating to ${url} (${i + 1}/${retries})`);
                 await new Promise(r => setTimeout(r, 2000));
             }
+        }
+    }
+
+    async function extractBodyContent(detailUrl: string) {
+        const detailPage = await context.newPage();
+        try {
+            await safeNavigate(detailPage, detailUrl);
+            return await detailPage.evaluate(() => {
+                const contentDiv = (document.querySelector('.xe_content') || document.querySelector('.rd_body') || document.querySelector('.read_body')) as HTMLElement;
+                if (!contentDiv) return null;
+
+                const normalizeCellText = (value: string | null | undefined) =>
+                    (value || '')
+                        .replace(/\u00A0/g, ' ')
+                        .replace(/\r/g, '')
+                        .split('\n')
+                        .map((line) => line.trim())
+                        .filter(Boolean)
+                        .join('<br>')
+                        .replace(/\|/g, '\\|');
+
+                const tableToMarkdown = (table: HTMLTableElement) => {
+                    const rows = Array.from(table.querySelectorAll('tr'));
+                    const grid: string[][] = [];
+
+                    rows.forEach((row, rowIndex) => {
+                        if (!grid[rowIndex]) grid[rowIndex] = [];
+                        let colIndex = 0;
+                        const cells = Array.from(row.querySelectorAll('th, td')) as HTMLTableCellElement[];
+
+                        cells.forEach((cell) => {
+                            while (grid[rowIndex][colIndex] !== undefined) colIndex += 1;
+
+                            const cellValue = normalizeCellText(cell.textContent) || '-';
+                            const rowSpan = Math.max(1, Number(cell.getAttribute('rowspan') || '1'));
+                            const colSpan = Math.max(1, Number(cell.getAttribute('colspan') || '1'));
+
+                            for (let r = 0; r < rowSpan; r += 1) {
+                                const targetRow = rowIndex + r;
+                                if (!grid[targetRow]) grid[targetRow] = [];
+                                for (let c = 0; c < colSpan; c += 1) {
+                                    grid[targetRow][colIndex + c] = cellValue;
+                                }
+                            }
+
+                            colIndex += colSpan;
+                        });
+                    });
+
+                    const maxColumns = grid.reduce((acc, row) => Math.max(acc, row.length), 0);
+                    if (maxColumns === 0 || grid.length === 0) return '';
+
+                    const normalizedRows = grid.map((row) => {
+                        const nextRow = [...row];
+                        for (let i = 0; i < maxColumns; i += 1) {
+                            if (!nextRow[i] || !nextRow[i].trim()) nextRow[i] = '-';
+                        }
+                        return nextRow;
+                    });
+
+                    const header = normalizedRows[0];
+                    const lines = [
+                        `| ${header.join(' | ')} |`,
+                        `| ${header.map(() => '---').join(' | ')} |`,
+                    ];
+
+                    for (let i = 1; i < normalizedRows.length; i += 1) {
+                        lines.push(`| ${normalizedRows[i].join(' | ')} |`);
+                    }
+
+                    return lines.join('\n');
+                };
+
+                const tables = Array.from(contentDiv.querySelectorAll('table'));
+                tables.forEach((table) => {
+                    const tableMd = tableToMarkdown(table as HTMLTableElement);
+                    if (!tableMd) return;
+
+                    const placeholder = document.createElement('pre');
+                    placeholder.textContent = `\n${tableMd}\n`;
+                    placeholder.style.whiteSpace = 'pre-wrap';
+                    placeholder.style.margin = '0';
+                    table.parentNode?.replaceChild(placeholder, table);
+                });
+
+                let text = contentDiv.innerText;
+                text = text.replace(/\n\s*\n\s*\n+/g, '\n\n');
+                return text.trim();
+            });
+        } finally {
+            await detailPage.close();
         }
     }
 
@@ -123,7 +216,6 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                         break;
                     }
 
-
                     // Incremental Check
                     // Normalize URL by removing 'page' parameter
                     const normalizeUrl = (rawUrl: string) => {
@@ -148,57 +240,52 @@ export async function crawlNotices(targetBoard?: string, targetPage?: string): P
                     });
 
                     if (existing && existing.processed) {
-                        // Update isPinned status even if already processed
-                        if (existing.isPinned !== link.isPinned) {
+                        if (refreshExisting) {
+                            try {
+                                const refreshedBodyContent = await extractBodyContent(link.url);
+                                const shouldUpdateContent = Boolean(refreshedBodyContent) && refreshedBodyContent !== existing.content;
+                                const refreshedDeadline = refreshedBodyContent
+                                    ? extractApplicationDeadlineFromText(`${link.title} ${refreshedBodyContent}`)
+                                    : null;
+                                const shouldUpdateMeta =
+                                    existing.isPinned !== link.isPinned ||
+                                    existing.title !== link.title ||
+                                    existing.date !== link.date ||
+                                    existing.category !== board.name ||
+                                    (refreshedDeadline !== null && refreshedDeadline !== existing.deadline);
+
+                                if (shouldUpdateContent || shouldUpdateMeta) {
+                                    await prisma.notice.update({
+                                        where: { id: existing.id },
+                                        data: {
+                                            title: link.title,
+                                            date: link.date,
+                                            category: board.name,
+                                            content: refreshedBodyContent || existing.content,
+                                            deadline: refreshedDeadline ?? existing.deadline,
+                                            isPinned: link.isPinned,
+                                        },
+                                    });
+                                    console.log(`Refreshed existing: ${link.title}`);
+                                } else {
+                                    console.log(`Skipping existing: ${link.title}`);
+                                }
+                            } catch (err) {
+                                console.error(`Failed to refresh existing detail ${link.url}`, err);
+                            }
+                        } else if (existing.isPinned !== link.isPinned) {
                             await prisma.notice.update({
                                 where: { id: existing.id },
-                                data: { isPinned: link.isPinned }
+                                data: { isPinned: link.isPinned },
                             });
+                        } else {
+                            console.log(`Skipping existing: ${link.title}`);
                         }
-                        console.log(`Skipping existing: ${link.title}`);
                         continue;
                     }
 
-                    // ... (rest of the loop) ...
-
                     try {
-                        const detailPage = await context.newPage();
-                        await safeNavigate(detailPage, link.url);
-
-                        // ... (content extraction) ...
-
-                        const bodyContent = await detailPage.evaluate(() => {
-                            const contentDiv = (document.querySelector('.xe_content') || document.querySelector('.rd_body') || document.querySelector('.read_body')) as HTMLElement;
-                            if (!contentDiv) return null;
-
-                            // Table handling
-                            const tables = Array.from(contentDiv.querySelectorAll('table'));
-                            tables.forEach(table => {
-                                let tableMd = '\n\n';
-                                const rows = Array.from(table.rows);
-                                rows.forEach((row, i) => {
-                                    const cells = Array.from(row.cells).map(c => c.textContent?.trim().replace(/\|/g, '\\|') || '');
-                                    tableMd += '| ' + cells.join(' | ') + ' |\n';
-                                    if (i === 0) {
-                                        tableMd += '| ' + cells.map(() => '---').join(' | ') + ' |\n';
-                                    }
-                                });
-                                tableMd += '\n';
-                                const placeholder = document.createElement('div');
-                                placeholder.innerHTML = tableMd.replace(/\n/g, '<br>');
-                                table.parentNode?.replaceChild(placeholder, table);
-                            });
-
-                            let text = contentDiv.innerText;
-                            text = text.replace(/\n\s*\n\s*\n+/g, '\n\n');
-                            return text.trim();
-                        });
-
-                        await detailPage.close();
-
-                        // Format content with Gemini for clean markdown (tables, lists, etc.)
-                        // console.log(`Formatting: ${link.title}`); // Removed as per original instruction, but was present in the original code. Keeping it removed as per the provided diff.
-                        // const formattedContent = bodyContent ? await formatNoticeContent(bodyContent) : null; // Removed as per original instruction, but was present in the original code. Keeping it removed as per the provided diff.
+                        const bodyContent = await extractBodyContent(link.url);
 
                         // Analyze with Gemini
                         console.log(`Analyzing (${boardProcessedCount + 1}/${MAX_NOTICES_PER_BOARD}): ${link.title}`);

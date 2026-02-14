@@ -6,11 +6,14 @@ import { ModeToggle } from '@/components/ModeToggle';
 import { useState, useEffect } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { cn } from '@/lib/utils';
-import { Home, Calendar, Settings, Sparkles } from 'lucide-react';
+import { Home, Calendar, Settings, Sparkles, LogIn, UserRound } from 'lucide-react';
+import { getProviders, signIn, useSession } from 'next-auth/react';
 
 export function NavBar() {
     const [isScrolled, setIsScrolled] = useState(false);
+    const [hasAuthProvider, setHasAuthProvider] = useState<boolean | null>(null);
     const { scrollY } = useScroll();
+    const { data: session, status } = useSession();
 
     // Dynamic padding based on scroll
     const padding = useTransform(scrollY, [0, 100], [24, 12]);
@@ -23,6 +26,18 @@ export function NavBar() {
         handleScroll();
         window.addEventListener('scroll', handleScroll, { passive: true });
         return () => window.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    useEffect(() => {
+        async function loadProviders() {
+            try {
+                const providers = await getProviders();
+                setHasAuthProvider(Boolean(providers && Object.keys(providers).length > 0));
+            } catch {
+                setHasAuthProvider(false);
+            }
+        }
+        void loadProviders();
     }, []);
 
     const navItems = [
@@ -75,7 +90,28 @@ export function NavBar() {
             </motion.div>
 
             <div className="flex gap-1 items-center">
-                {navItems.map((item, index) => (
+                {status === 'authenticated' ? (
+                    <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-semibold mr-1">
+                        <UserRound className="w-3.5 h-3.5" />
+                        {session?.user?.name || session?.user?.email || '로그인됨'}
+                    </div>
+                ) : hasAuthProvider ? (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => signIn(undefined, { callbackUrl: '/settings' })}
+                        className="hidden md:inline-flex h-9 px-3 rounded-xl text-muted-foreground hover:text-foreground"
+                    >
+                        <LogIn className="w-4 h-4 mr-1.5" />
+                        로그인
+                    </Button>
+                ) : (
+                    <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-border/50 bg-muted/30 text-muted-foreground text-xs font-semibold mr-1">
+                        익명 모드
+                    </div>
+                )}
+
+                {navItems.map((item) => (
                     <Link key={item.href} href={item.href}>
                         <motion.div
                             whileHover={{ scale: 1.05 }}

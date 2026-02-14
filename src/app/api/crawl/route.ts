@@ -1,14 +1,19 @@
 
 import { NextResponse } from 'next/server';
-import { crawlNotices } from '@/lib/crawler';
+import { prisma } from '@/lib/prisma';
+import { triggerNoticeCrawl } from '@/lib/noticeAutoCrawler';
 
 export async function GET() {
     try {
         // Crawl ALL boards (Academic/Scholarship, General, Employment, News)
-        const notices = await crawlNotices();
+        const crawl = await triggerNoticeCrawl('api:crawl', { refreshExisting: true });
+        const notices = await prisma.notice.findMany({
+            orderBy: { id: 'desc' }
+        });
 
         return NextResponse.json({
             success: true,
+            crawl,
             total: notices.length,
             byCategory: {
                 academic: notices.filter(n => n.category === 'Academic/Scholarship').length,

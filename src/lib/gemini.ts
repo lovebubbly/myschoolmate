@@ -1,5 +1,6 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { extractApplicationDeadlineFromText } from '@/lib/deadlineExtractor';
 
 // Time-aware greeting helper
 function getTimeGreeting(): { greeting: string; emoji: string } {
@@ -33,13 +34,7 @@ function extractByRegex(title: string, body: string) {
         minGrade = 1;
     }
 
-    // Date: 2025. 12. 24 or 2025-12-24 or 2025/12/24
-    const dateMatch = text.match(/20[2-3][0-9][.\-/]\s*[0-1]?[0-9][.\-/]\s*[0-3]?[0-9]/);
-    let applicationDeadline = dateMatch ? dateMatch[0].replace(/[\s]/g, '') : null;
-    // Standardize to YYYY.MM.DD
-    if (applicationDeadline) {
-        applicationDeadline = applicationDeadline.replace(/-/g, '.').replace(/\//g, '.');
-    }
+    const applicationDeadline = extractApplicationDeadlineFromText(text);
 
     // GPA: Handle 2.0~4.5 range, and various formats
     const gpaMatch = text.match(/(?:성적|평점|GPA).*?([2-4]\.[0-9][0-9]?)/i) ||

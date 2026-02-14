@@ -273,7 +273,7 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
 function extractCourses(yearData: unknown, yearKey: string): PlanningCourse[] {
     if (!isRecord(yearData)) return [];
     return Object.entries(yearData)
-        .filter(([semester]) => /^\\d-\\d$/.test(semester))
+        .filter(([semester]) => /^\d-\d$/.test(semester))
         .flatMap(([, rawCourses]) => {
             if (!Array.isArray(rawCourses)) return [];
             return rawCourses

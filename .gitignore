@@ -63,3 +63,8 @@ test-crawl.ts
 test-crawler.ts
 check-duplicates.ts
 cleanup-duplicates.ts
+
+# local env artifacts
+.venv/
+output/
+tmp/

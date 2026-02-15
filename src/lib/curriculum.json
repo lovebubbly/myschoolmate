@@ -442,6 +442,26 @@
             ]
         }
     },
+    "trackRules": {
+        "info_net": {
+            "categoryRequirements": {
+                "MAJOR_MANDATORY": 15,
+                "MAJOR_ELECTIVE": 9
+            }
+        },
+        "bigdata_ai": {
+            "categoryRequirements": {
+                "MAJOR_MANDATORY": 3,
+                "MAJOR_ELECTIVE": 21
+            }
+        },
+        "semi_sys": {
+            "categoryRequirements": {
+                "MAJOR_MANDATORY": 12,
+                "MAJOR_ELECTIVE": 9
+            }
+        }
+    },
     "curriculumVersions": {
         "2016": {
             "academicYear": 2016,

@@ -28,6 +28,16 @@ const BOARDS = [
     { name: 'News', url: 'https://inform.chungbuk.ac.kr/cisub5_4' }
 ];
 
+function normalizeNoticeUrl(rawUrl: string) {
+    try {
+        const u = new URL(rawUrl);
+        u.searchParams.delete('page');
+        return u.toString();
+    } catch {
+        return rawUrl;
+    }
+}
+
 async function syncNoticeTags(noticeId: number, tags: string[]) {
     const normalized = normalizeTags(tags || []);
     await prisma.noticeTag.deleteMany({ where: { noticeId } });
@@ -249,18 +259,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                     }
 
                     // Incremental Check
-                    // Normalize URL by removing 'page' parameter
-                    const normalizeUrl = (rawUrl: string) => {
-                        try {
-                            const u = new URL(rawUrl);
-                            u.searchParams.delete('page');
-                            return u.toString();
-                        } catch (e) {
-                            return rawUrl;
-                        }
-                    };
-
-                    const normalizedUrl = normalizeUrl(link.url);
+                    const normalizedUrl = normalizeNoticeUrl(link.url);
 
                     const existing = await prisma.notice.findFirst({
                         where: {
@@ -272,54 +271,95 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                     });
 
                     if (existing && existing.processed) {
-                        if (refreshExisting) {
-                            try {
-                                const refreshedBodyContent = await extractBodyContent(link.url);
-                                const shouldUpdateContent = Boolean(refreshedBodyContent) && refreshedBodyContent !== existing.content;
-                                const refreshedDeadline = refreshedBodyContent
-                                    ? extractApplicationDeadlineFromText(`${link.title} ${refreshedBodyContent}`)
-                                    : null;
-                                const shouldUpdateMeta =
-                                    existing.isPinned !== link.isPinned ||
-                                    existing.title !== link.title ||
-                                    existing.date !== link.date ||
-                                    existing.category !== board.name ||
-                                    (refreshedDeadline !== null && refreshedDeadline !== existing.deadline);
+                        const hasMetadataChanged = existing.title !== link.title || existing.date !== link.date || existing.category !== board.name;
 
-                                if (shouldUpdateContent || shouldUpdateMeta) {
+                        if (!refreshExisting) {
+                            if (existing.isPinned !== link.isPinned || hasMetadataChanged) {
+                                await prisma.notice.update({
+                                    where: { id: existing.id },
+                                    data: {
+                                        title: link.title,
+                                        date: link.date,
+                                        category: board.name,
+                                        isPinned: link.isPinned,
+                                    },
+                                });
+                            }
+                            console.log(`Skipping existing: ${link.title}`);
+                            continue;
+                        }
+
+                        if (!hasMetadataChanged) {
+                            if (existing.isPinned !== link.isPinned) {
+                                await prisma.notice.update({
+                                    where: { id: existing.id },
+                                    data: { isPinned: link.isPinned },
+                                });
+                            }
+                            console.log(`Skipping existing: ${link.title}`);
+                            continue;
+                        }
+
+                        try {
+                            const refreshedBodyContent = await extractBodyContent(link.url);
+                            const shouldUpdateContent = Boolean(refreshedBodyContent) && refreshedBodyContent !== existing.content;
+                            const refreshedDeadline = refreshedBodyContent
+                                ? extractApplicationDeadlineFromText(`${link.title} ${refreshedBodyContent}`)
+                                : null;
+                            const shouldUpdateDeadline = refreshedDeadline !== null && refreshedDeadline !== existing.deadline;
+
+                            if (shouldUpdateContent || shouldUpdateDeadline) {
+                                await prisma.notice.update({
+                                    where: { id: existing.id },
+                                    data: {
+                                        title: link.title,
+                                        date: link.date,
+                                        category: board.name,
+                                        content: refreshedBodyContent || existing.content,
+                                        deadline: shouldUpdateDeadline ? refreshedDeadline : existing.deadline,
+                                        isPinned: link.isPinned,
+                                    },
+                                });
+
+                                const refreshedTags = extractTagsByRegex({
+                                    title: link.title,
+                                    body: refreshedBodyContent || existing.content || '',
+                                    category: board.name,
+                                });
+                                await syncNoticeTags(existing.id, refreshedTags);
+
+                                console.log(`Refreshed existing: ${link.title}`);
+                            } else if (hasMetadataChanged || existing.isPinned !== link.isPinned) {
+                                await prisma.notice.update({
+                                    where: { id: existing.id },
+                                    data: {
+                                        title: link.title,
+                                        date: link.date,
+                                        category: board.name,
+                                        isPinned: link.isPinned,
+                                    },
+                                });
+                                console.log(`Updated metadata: ${link.title}`);
+                            } else {
+                                console.log(`Skipping existing: ${link.title}`);
+                            }
+                        } catch (err) {
+                            console.error(`Failed to refresh existing detail ${link.url}`, err);
+                            if (hasMetadataChanged || existing.isPinned !== link.isPinned) {
+                                try {
                                     await prisma.notice.update({
                                         where: { id: existing.id },
                                         data: {
                                             title: link.title,
                                             date: link.date,
                                             category: board.name,
-                                            content: refreshedBodyContent || existing.content,
-                                            deadline: refreshedDeadline ?? existing.deadline,
                                             isPinned: link.isPinned,
                                         },
                                     });
-
-                                    const refreshedTags = extractTagsByRegex({
-                                        title: link.title,
-                                        body: refreshedBodyContent || existing.content || '',
-                                        category: board.name,
-                                    });
-                                    await syncNoticeTags(existing.id, refreshedTags);
-
-                                    console.log(`Refreshed existing: ${link.title}`);
-                                } else {
-                                    console.log(`Skipping existing: ${link.title}`);
+                                } catch (fallbackError) {
+                                    console.error(`Failed metadata fallback for existing notice ${link.url}`, fallbackError);
                                 }
-                            } catch (err) {
-                                console.error(`Failed to refresh existing detail ${link.url}`, err);
                             }
-                        } else if (existing.isPinned !== link.isPinned) {
-                            await prisma.notice.update({
-                                where: { id: existing.id },
-                                data: { isPinned: link.isPinned },
-                            });
-                        } else {
-                            console.log(`Skipping existing: ${link.title}`);
                         }
                         continue;
                     }

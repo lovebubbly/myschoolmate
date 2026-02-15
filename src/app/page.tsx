@@ -36,7 +36,7 @@ interface Notice {
   deadline?: string | null;
   minGpa?: number | null;
   content?: string | null;
-  tags?: string[];
+  tags?: Array<{ id: number; slug: string; name: string }>;
   isPinned: boolean;
 }
 
@@ -88,6 +88,8 @@ const READ_NOTICE_IDS_KEY = 'dashboard-read-notice-ids-v1';
 const NOTICE_BASELINE_KEY = 'dashboard-notice-baseline-v1';
 const WIDGET_ORDER_KEY = 'dashboard-widget-order';
 const WIDGET_ENABLED_KEY = 'dashboard-enabled-widgets';
+const NOTICE_SELECTED_TAGS_KEY = 'dashboard-selected-tags-v1';
+const NOTICE_TAG_MODE_KEY = 'dashboard-tag-mode-v1';
 const FALLBACK_WIDGET_ORDER = ['inbox', 'cafeteria', 'notices'];
 const FALLBACK_WIDGET_ENABLED = { inbox: true, cafeteria: true, notices: true };
 const VALID_WIDGET_IDS = ['inbox', 'cafeteria', 'notices'];
@@ -124,6 +126,22 @@ function normalizeEnabledWidgets(value: unknown) {
     cafeteria: typeof (value as { cafeteria?: unknown }).cafeteria === 'boolean' ? Boolean((value as { cafeteria?: unknown }).cafeteria) : FALLBACK_WIDGET_ENABLED.cafeteria,
     notices: typeof (value as { notices?: unknown }).notices === 'boolean' ? Boolean((value as { notices?: unknown }).notices) : FALLBACK_WIDGET_ENABLED.notices,
   };
+}
+
+function normalizeTagList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) => String(item).trim())
+        .filter((item) => item.length > 0)
+    )
+  );
+}
+
+function normalizeTagMode(value: unknown): 'any' | 'all' {
+  return String(value).toLowerCase() === 'all' ? 'all' : 'any';
 }
 
 function toCrawlerStatusText(status: NoticeAutoCrawlerStatus | null) {
@@ -291,10 +309,10 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
             <div className="mt-auto pt-3 flex flex-wrap gap-2">
               {(notice.tags || []).map((tag) => (
                 <span
-                  key={`${notice.id}-${tag}`}
+                  key={`${notice.id}-${tag.slug}`}
                   className="text-[11px] font-semibold text-muted-foreground/90 bg-muted/50 px-2.5 py-1 rounded-lg border border-border/50"
                 >
-                  #{tag}
+                  #{tag.name}
                 </span>
               ))}
               {notice.deadline && (
@@ -347,10 +365,10 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
               <div className="flex flex-wrap gap-2 mt-2">
                 {notice.tags.map((tag) => (
                   <span
-                    key={`${notice.id}-${tag}-dialog`}
+                    key={`${notice.id}-${tag.slug}-dialog`}
                     className="text-[11px] font-semibold text-muted-foreground/90 bg-muted/50 px-2.5 py-1 rounded-lg border border-border/50"
                   >
-                    #{tag}
+                    #{tag.name}
                   </span>
                 ))}
               </div>
@@ -481,8 +499,21 @@ export default function Home() {
 
   const [showFilters, setShowFilters] = useState(false);
   const [filterProfile, setFilterProfile] = useState<FilterProfile>({ grade: 0, income: 11, gpa: 0 }); // Default income 11 (All)
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [tagMode, setTagMode] = useState<'any' | 'all'>('any');
+  const [selectedTags, setSelectedTags] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const saved = localStorage.getItem(NOTICE_SELECTED_TAGS_KEY);
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return normalizeTagList(parsed);
+    } catch {
+      return [];
+    }
+  });
+  const [tagMode, setTagMode] = useState<'any' | 'all'>(() => {
+    if (typeof window === 'undefined') return 'any';
+    return normalizeTagMode(localStorage.getItem(NOTICE_TAG_MODE_KEY));
+  });
   const [loadedProfile, setLoadedProfile] = useState<LoadedProfile | null>(null);
 
   const [isPinnedExpanded, setIsPinnedExpanded] = useState(false);
@@ -634,8 +665,15 @@ export default function Home() {
   }
 
   async function loadNotices() {
+    const queryParams = new URLSearchParams();
+    selectedTags.forEach((tag) => queryParams.append('tags', tag));
+    if (selectedTags.length > 0) {
+      queryParams.set('tagMode', tagMode);
+    }
+
+    const url = `/api/notices${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     try {
-      const res = await fetch('/api/notices');
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         if (data.autoCrawler) {
@@ -646,7 +684,11 @@ export default function Home() {
 
         // First-run baseline: treat currently loaded notices as read,
         // so inbox only highlights newly arrived notices afterward.
-        if (incomingNotices.length > 0 && localStorage.getItem(NOTICE_BASELINE_KEY) !== '1') {
+        if (
+          incomingNotices.length > 0 &&
+          selectedTags.length === 0 &&
+          localStorage.getItem(NOTICE_BASELINE_KEY) !== '1'
+        ) {
           setReadNoticeIds((prev) => {
             const next = Array.from(new Set([...prev, ...incomingNotices.map((notice) => notice.id)]));
             queueDashboardSync({ readNoticeIds: next });
@@ -663,13 +705,24 @@ export default function Home() {
   useEffect(() => {
     void (async () => {
       await fetchProfile();
-      await loadNotices();
     })();
   }, []);
 
   useEffect(() => {
     localStorage.setItem(READ_NOTICE_IDS_KEY, JSON.stringify(readNoticeIds));
   }, [readNoticeIds]);
+
+  useEffect(() => {
+    localStorage.setItem(NOTICE_SELECTED_TAGS_KEY, JSON.stringify(selectedTags));
+  }, [selectedTags]);
+
+  useEffect(() => {
+    localStorage.setItem(NOTICE_TAG_MODE_KEY, tagMode);
+  }, [tagMode]);
+
+  useEffect(() => {
+    void loadNotices();
+  }, [selectedTags, tagMode]);
 
   const saveWidgetOrder = (newOrder: string[]) => {
     const normalized = normalizeWidgetOrder(newOrder);
@@ -711,7 +764,7 @@ export default function Home() {
         if (data.autoCrawler) {
           setAutoCrawlerStatus(data.autoCrawler);
         }
-        setNotices(data.notices || []);
+        await loadNotices();
         fetchBriefing();
       }
     } catch (error) {
@@ -787,15 +840,6 @@ export default function Home() {
       }
       if (filterProfile.gpa && n.minGpa && filterProfile.gpa < n.minGpa) return false;
 
-      if (selectedTags.length > 0) {
-        const noticeTags = n.tags || [];
-        if (tagMode === 'any') {
-          if (!selectedTags.some((tag) => noticeTags.includes(tag))) return false;
-        } else if (!selectedTags.every((tag) => noticeTags.includes(tag))) {
-          return false;
-        }
-      }
-
       return true;
     });
 
@@ -804,9 +848,19 @@ export default function Home() {
   const noticeLookup = useMemo(() => new Map(notices.map((notice) => [notice.id, notice])), [notices]);
   const readNoticeSet = useMemo(() => new Set(readNoticeIds), [readNoticeIds]);
   const availableTags = useMemo(() => {
-    const tags = notices.flatMap((notice) => notice.tags || []);
-    return Array.from(new Set(tags)).sort((a, b) => a.localeCompare(b, 'ko-KR'));
+    const tagMap = new Map<string, { slug: string; name: string }>();
+    for (const notice of notices) {
+      for (const tag of notice.tags || []) {
+        if (!tag || !tag.slug) continue;
+        tagMap.set(tag.slug, { slug: tag.slug, name: tag.name || tag.slug });
+      }
+    }
+    return Array.from(tagMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'ko-KR'));
   }, [notices]);
+
+  const availableTagNameBySlug = useMemo(() => {
+    return new Map(availableTags.map((tag) => [tag.slug, tag.name] as const));
+  }, [availableTags]);
   const unreadNoticeCount = notices.filter((notice) => !readNoticeSet.has(notice.id)).length;
 
   const inboxItems = useMemo(() => {
@@ -1459,10 +1513,10 @@ export default function Home() {
                             </div>
                           </div>
 
-                          {availableTags.length > 0 && (
+                          {selectedTags.length > 0 && (
                             <div className="space-y-2">
                               <div className="flex items-center justify-between">
-                                <label className="text-xs font-semibold text-muted-foreground">태그 필터</label>
+                                <label className="text-xs font-semibold text-muted-foreground">선택된 태그</label>
                                 <button
                                   type="button"
                                   onClick={() => setSelectedTags([])}
@@ -1472,27 +1526,22 @@ export default function Home() {
                                 </button>
                               </div>
                               <div className="flex flex-wrap gap-2">
-                                {availableTags.map((tag) => {
-                                  const isActive = selectedTags.includes(tag);
-                                  return (
-                                    <button
-                                      key={`tag-filter-${tag}`}
-                                      type="button"
-                                      onClick={() =>
-                                        setSelectedTags((prev) =>
-                                          prev.includes(tag)
-                                            ? prev.filter((item) => item !== tag)
-                                            : [...prev, tag]
-                                        )
-                                      }
-                                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${isActive ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted/50 text-muted-foreground border-border hover:text-foreground'}`}
-                                    >
-                                      #{tag}
-                                    </button>
-                                  );
-                                })}
+                                {selectedTags.map((tag) => (
+                                  <button
+                                    key={`selected-tag-${tag}`}
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedTags((prev) => prev.filter((item) => item !== tag))
+                                    }
+                                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-primary/15 text-primary border border-primary/25 hover:bg-primary/25"
+                                    aria-label={`선택된 태그 ${availableTagNameBySlug.get(tag) || tag} 제거`}
+                                  >
+                                    #{availableTagNameBySlug.get(tag) || tag}
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                ))}
                               </div>
-                              <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                 <span>모드:</span>
                                 <select
                                   className="bg-muted/50 rounded-full px-3 py-1 border border-border text-xs font-semibold"
@@ -1502,6 +1551,35 @@ export default function Home() {
                                   <option value="any">하나라도 포함</option>
                                   <option value="all">모두 포함</option>
                                 </select>
+                              </div>
+                            </div>
+                          )}
+
+                          {availableTags.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-semibold text-muted-foreground">태그 필터</label>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {availableTags.map((tag) => {
+                                  const isActive = selectedTags.includes(tag.slug);
+                                  return (
+                                    <button
+                                      key={`tag-filter-${tag.slug}`}
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedTags((prev) =>
+                                          prev.includes(tag.slug)
+                                            ? prev.filter((item) => item !== tag.slug)
+                                            : [...prev, tag.slug]
+                                        )
+                                      }
+                                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${isActive ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted/50 text-muted-foreground border-border hover:text-foreground'}`}
+                                    >
+                                      #{tag.name}
+                                    </button>
+                                  );
+                                  })}
                               </div>
                             </div>
                           )}

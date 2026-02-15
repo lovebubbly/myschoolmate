@@ -9,8 +9,31 @@ type TrackApiCourse = {
 type TrackApiItem = {
   id: number;
   name: string;
+  key?: string;
   courses: TrackApiCourse[];
 };
+
+const TRACK_RULE_DEFAULTS: Record<
+  string,
+  Partial<{
+    MAJOR_MANDATORY: number;
+    MAJOR_ELECTIVE: number;
+    GENERAL: number;
+    CROSS: number;
+  }>
+> = {
+  info_net: { MAJOR_MANDATORY: 15, MAJOR_ELECTIVE: 9 },
+  bigdata_ai: { MAJOR_MANDATORY: 3, MAJOR_ELECTIVE: 21 },
+  semi_sys: { MAJOR_MANDATORY: 12, MAJOR_ELECTIVE: 9 },
+};
+
+const PLANNING_YEAR_MIN = 2016;
+const PLANNING_YEAR_MAX = 2025;
+
+const EXPECTED_ACADEMIC_YEARS = Array.from(
+  { length: PLANNING_YEAR_MAX - PLANNING_YEAR_MIN + 1 },
+  (_, index) => PLANNING_YEAR_MIN + index,
+);
 
 type RequirementResponse = {
   success: boolean;
@@ -200,6 +223,11 @@ test.describe('Planning Progress', () => {
       test.skip(true, 'No courses available on selected planning track.');
       return;
     }
+    const expectedCategoryRules = targetTrack.key ? TRACK_RULE_DEFAULTS[targetTrack.key] : null;
+    if (!expectedCategoryRules || Object.keys(expectedCategoryRules).length === 0) {
+      test.skip(true, `No category rule fixture for track key "${targetTrack.key ?? 'unknown'}".`);
+      return;
+    }
 
     const curriculumRes = await request.get(`${BASE_URL}/api/curriculum`);
     expect(curriculumRes.ok()).toBeTruthy();
@@ -207,38 +235,36 @@ test.describe('Planning Progress', () => {
     expect(curriculumJson.success).toBeTruthy();
 
     const availableYears = Array.isArray(curriculumJson.availableYears) ? curriculumJson.availableYears : [];
-    expect(availableYears.length).toBeGreaterThanOrEqual(2);
-    expect(availableYears).toContain(2016);
-    expect(availableYears).toContain(2025);
-    expect(availableYears).toContainEqual(Math.min(...availableYears));
-    expect(availableYears).toContainEqual(Math.max(...availableYears));
+    const sortedYears = [...availableYears].sort((a, b) => a - b);
+    expect(sortedYears).toEqual(EXPECTED_ACADEMIC_YEARS);
 
-    const baselineYear = availableYears[0];
-    const latestYear = availableYears[availableYears.length - 1];
+    const baselineYear = sortedYears[0];
+    const latestYear = sortedYears[sortedYears.length - 1];
     expect(baselineYear).toBeLessThanOrEqual(latestYear);
     expect(latestYear).toBe(2025);
 
-    const baselineRes = await request.get(
-      `${BASE_URL}/api/planning/requirements?trackId=${targetTrack.id}&academicYear=${baselineYear}`,
-    );
-    expect(baselineRes.ok()).toBeTruthy();
-    const baselineJson = (await baselineRes.json()) as RequirementResponse;
-    expect(baselineJson.success).toBeTruthy();
-    expect(baselineJson.academicYear).toBe(baselineYear);
-    expect(Array.isArray(baselineJson.track.categorySummaries)).toBeTruthy();
-    expect(baselineJson.track.requiredCourseCount).toBeGreaterThan(0);
-    expect(typeof baselineJson.track.requirementStatus?.missingRequiredCourseNamesCount).toBe('number');
-    expect(baselineJson.track.requirementStatus?.missingRequiredCourseNamesCount).toBe(
-      baselineJson.track.missingRequiredCourseNames.length,
+    const requirementsByYear = await Promise.all(
+      sortedYears.map(async (academicYear) => {
+        const requirementsRes = await request.get(
+          `${BASE_URL}/api/planning/requirements?trackId=${targetTrack.id}&academicYear=${academicYear}`,
+        );
+        expect(requirementsRes.ok()).toBeTruthy();
+        const json = (await requirementsRes.json()) as RequirementResponse;
+        expect(json.success).toBeTruthy();
+        expect(json.academicYear).toBe(academicYear);
+        expect(Array.isArray(json.track.categorySummaries)).toBeTruthy();
+        expect(json.track.requiredCourseCount).toBeGreaterThan(0);
+        expect(typeof json.track.requirementStatus?.missingRequiredCourseNamesCount).toBe('number');
+        expect(json.track.requirementStatus?.missingRequiredCourseNamesCount).toBe(
+          json.track.missingRequiredCourseNames.length,
+        );
+        return json;
+      }),
     );
 
-    const latestRes = await request.get(
-      `${BASE_URL}/api/planning/requirements?trackId=${targetTrack.id}&academicYear=${latestYear}`,
-    );
-    expect(latestRes.ok()).toBeTruthy();
-    const latestJson = (await latestRes.json()) as RequirementResponse;
-    expect(latestJson.success).toBeTruthy();
-    expect(latestJson.academicYear).toBe(latestYear);
+    const latestJson = requirementsByYear[requirementsByYear.length - 1];
+    const baselineJson = requirementsByYear[0];
+    expect(baselineJson).toBeTruthy();
 
     expect(latestJson.track.requirementStatus).toBeTruthy();
     expect(typeof latestJson.track.requirementStatus?.requiredCoursesSatisfied).toBe('boolean');
@@ -251,6 +277,13 @@ test.describe('Planning Progress', () => {
 
     const anyCreditCategory = latestJson.track.categorySummaries.some((summary) => summary.requiredCredits > 0);
     expect(anyCreditCategory).toBeTruthy();
+
+    const categoryChecks = latestJson.track.requirementStatus?.categoryChecks ?? [];
+    for (const [categoryCode, expectedCredits] of Object.entries(expectedCategoryRules)) {
+      const matched = categoryChecks.find((check) => check.categoryCode === categoryCode);
+      expect(matched).toBeTruthy();
+      expect(matched?.requiredCredits).toBe(expectedCredits);
+    }
 
     const sampleCourseId = targetTrack.courses[0].id;
     const saveRes = await request.post(`${BASE_URL}/api/planning/progress`, {

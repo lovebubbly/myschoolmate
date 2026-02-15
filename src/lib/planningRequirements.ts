@@ -256,6 +256,25 @@ function getTrackIdByKey(trackIdByKey?: TrackIdByKey): TrackIdByKey {
     return trackIdByKey;
 }
 
+function parseTrackCategoryDefaults(root: JsonObject): Record<string, Partial<Record<GradeCategory, number>>> {
+    const rulesRaw = isRecord(root.trackRules) ? (root.trackRules as JsonObject) : null;
+    if (!rulesRaw) {
+        return {};
+    }
+
+    const result: Record<string, Partial<Record<GradeCategory, number>>> = {};
+
+    Object.entries(rulesRaw).forEach(([trackKey, ruleRaw]) => {
+        if (!isRecord(ruleRaw)) return;
+        const categoryRequirements = normalizeCategoryRequirements(ruleRaw.categoryRequirements);
+        if (Object.keys(categoryRequirements).length > 0) {
+            result[trackKey] = categoryRequirements;
+        }
+    });
+
+    return result;
+}
+
 function resolveTrackKeyById(
     trackId: number,
     trackKeys: string[],
@@ -310,6 +329,7 @@ function parseLegacyTracks(root: JsonObject): Record<string, { name: string; req
 
 function parseVersions(root: JsonObject): ParsedVersion[] {
     const legacyTracks = parseLegacyTracks(root);
+    const trackRuleDefaults = parseTrackCategoryDefaults(root);
     const versionsRaw = isRecord(root.curriculumVersions) ? (root.curriculumVersions as JsonObject) : null;
     if (!versionsRaw) {
         const numericYears = Object.keys(root)
@@ -323,7 +343,10 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
             sourceYear: `${year}`,
             isActive: year === TRACKS_RANGE.max,
             trackRequirements: Object.entries(legacyTracks).reduce<Record<string, YearTrackRequirement>>((acc, [trackKey, track]) => {
-                acc[trackKey] = { requiredCourses: track.required, categoryRequirements: {} };
+                acc[trackKey] = {
+                    requiredCourses: track.required,
+                    categoryRequirements: trackRuleDefaults[trackKey] ?? {},
+                };
                 return acc;
             }, {}),
         }));
@@ -346,19 +369,12 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
                 ? asStringArray(trackRaw.requiredCourses)
                 : asStringArray(trackRaw.requiredCourseNames);
             const fallback = required.length > 0 ? required : asStringArray(legacyTracks[trackKey]?.required);
-            const categoryRequirements: Partial<Record<GradeCategory, number>> = {};
-            if (isRecord(trackRaw.categoryRequirements)) {
-                Object.entries(trackRaw.categoryRequirements as JsonObject).forEach(([key, value]) => {
-                    const normalized = normalizeCategoryKey(key);
-                    const parsed = toInt(value);
-                    if (normalized && parsed !== null && parsed >= 0) {
-                        categoryRequirements[normalized] = parsed;
-                    }
-                });
-            }
+            const categoryDefaults = trackRuleDefaults[trackKey] ?? {};
+            const explicitRequirements = normalizeCategoryRequirements(trackRaw.categoryRequirements);
+            const mergedRequirements = { ...categoryDefaults, ...explicitRequirements };
             normalizedTrackRequirements[trackKey] = {
                 requiredCourses: fallback,
-                categoryRequirements,
+                categoryRequirements: mergedRequirements,
             };
         });
 
@@ -366,7 +382,7 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
             if (!normalizedTrackRequirements[trackKey]) {
                 normalizedTrackRequirements[trackKey] = {
                     requiredCourses: track.required,
-                    categoryRequirements: {},
+                    categoryRequirements: trackRuleDefaults[trackKey] ?? {},
                 };
             }
         });
@@ -483,11 +499,14 @@ function mapRequiredCourses(requiredCourseNames: string[], allCourses: PlanningC
     return { requiredCourseIds, requiredCourses, missingRequiredCourseNames };
 }
 
-function normalizeCategoryRule(rawRequirements: Partial<Record<GradeCategory, number>>): Partial<Record<GradeCategory, number>> {
+function normalizeCategoryRequirements(rawRequirements: unknown): Partial<Record<GradeCategory, number>> {
     const normalized: Partial<Record<GradeCategory, number>> = {};
 
+    if (!isRecord(rawRequirements)) return normalized;
+
     Object.entries(rawRequirements).forEach(([rawCode, rawValue]) => {
-        const code = rawCode as GradeCategory;
+        const code = normalizeCategoryKey(rawCode);
+        if (!code) return;
         const value = toInt(rawValue);
         if (!value || value <= 0) return;
         normalized[code] = value;
@@ -501,7 +520,7 @@ function resolveCategoryRequirements(
     requiredCourseIds: string[],
     catalogCourses: PlanningCourse[],
 ): Partial<Record<GradeCategory, number>> {
-    const explicitRequirements = normalizeCategoryRule(rawRequirements);
+    const explicitRequirements = normalizeCategoryRequirements(rawRequirements);
     if (Object.keys(explicitRequirements).length > 0) {
         return explicitRequirements;
     }

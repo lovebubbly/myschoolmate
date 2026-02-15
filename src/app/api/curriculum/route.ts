@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
-import { buildTracksForYear } from '@/lib/planningRequirements';
+import { buildTracksForYear, getCurriculumCatalogSnapshotWithDbFallback } from '@/lib/planningRequirements';
 import { ensurePlanningCatalogSeeded } from '@/lib/planningCatalogSeed';
 
 export async function GET(request: Request) {
     try {
         const seed = await ensurePlanningCatalogSeeded();
         const trackIdByKey = Object.fromEntries(seed.tracks.map((track) => [track.trackKey, track.trackId]));
+        const catalog = await getCurriculumCatalogSnapshotWithDbFallback();
         const { searchParams } = new URL(request.url);
         const requestedYear = (() => {
             const raw = searchParams.get('academicYear');
@@ -14,7 +15,7 @@ export async function GET(request: Request) {
             return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
         })();
 
-        const payload = buildTracksForYear(requestedYear, { trackIdByKey });
+        const payload = buildTracksForYear(requestedYear, { trackIdByKey, catalog });
 
         return NextResponse.json({
             success: true,

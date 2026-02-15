@@ -2,11 +2,10 @@ import { prisma } from '@/lib/prisma';
 import { GradeCategory, getCurriculumCatalogSnapshot } from '@/lib/planningRequirements';
 
 type TrackSeed = { trackKey: string; trackId: number };
+type SeedResult = { tracks: TrackSeed[]; versionsCount: number };
 type SeedRunState = {
     loaded: boolean;
-    inFlight: Promise<{
-        tracks: TrackSeed[];
-    }> | null;
+    inFlight: Promise<SeedResult> | null;
     tracksSeed: TrackSeed[] | null;
     versionsCount: number;
 };
@@ -65,7 +64,7 @@ export async function ensurePlanningCatalogSeeded(): Promise<{
     }
 
     if (!seedState.inFlight) {
-        seedState.inFlight = (async () => {
+        const seedTask = (async () => {
             const snapshot = getCurriculumCatalogSnapshot();
             const trackIdsByKey = await loadSeedTrackMap(snapshot);
             const tracksSeed = Object.entries(trackIdsByKey).map(([trackKey, trackId]) => ({ trackKey, trackId }));
@@ -116,20 +115,28 @@ export async function ensurePlanningCatalogSeeded(): Promise<{
             });
 
             seedState.loaded = true;
-            seedState.inFlight = null;
             seedState.tracksSeed = tracksSeed;
             seedState.versionsCount = versionsCount;
-            return tracksSeed;
-        })().catch((error) => {
-            seedState.inFlight = null;
-            throw error;
-        });
+            return {
+                tracks: tracksSeed,
+                versionsCount,
+            } satisfies SeedResult;
+        })();
+
+        seedState.inFlight = seedTask;
+        try {
+            const result = await seedTask;
+            return result;
+        } finally {
+            if (seedState.inFlight === seedTask) {
+                seedState.inFlight = null;
+            }
+        }
     }
 
-    const tracksSeed = await seedState.inFlight;
-    const versionsCount = getCurriculumCatalogSnapshot().versions.length;
+    const result = await seedState.inFlight;
     return {
-        tracks: Array.isArray(tracksSeed) ? tracksSeed : [],
-        versionsCount,
+        tracks: result?.tracks ?? [],
+        versionsCount: result?.versionsCount ?? 0,
     };
 }

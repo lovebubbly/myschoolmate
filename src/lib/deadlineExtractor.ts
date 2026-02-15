@@ -114,7 +114,7 @@ export function extractApplicationDeadlineFromText(rawText: string): string | nu
 
   if (keywordCandidates.length > 0) {
     keywordCandidates.sort((a, b) => toDateValue(a) - toDateValue(b));
-    return keywordCandidates[0];
+    return keywordCandidates[keywordCandidates.length - 1];
   }
 
   for (const line of lines) {
@@ -127,5 +127,6 @@ export function extractApplicationDeadlineFromText(rawText: string): string | nu
     .filter((v): v is string => Boolean(v));
 
   if (allDates.length === 0) return null;
+  allDates.sort((a, b) => toDateValue(a) - toDateValue(b));
   return allDates[allDates.length - 1];
 }

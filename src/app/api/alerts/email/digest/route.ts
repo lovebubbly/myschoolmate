@@ -10,12 +10,45 @@ export const dynamic = 'force-dynamic';
 
 type DigestScope = 'me' | 'all';
 
+type BriefingOptions = {
+    maxItems?: number;
+    recentDays?: number;
+};
+
 function parseEmail(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.trim().toLowerCase();
     if (!normalized) return null;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return null;
     return normalized;
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return undefined;
+    return Math.trunc(parsed);
+}
+
+function resolveBriefingOptions(dashboardState: string | null | undefined): BriefingOptions {
+    if (!dashboardState) return {};
+
+    try {
+        const parsed = JSON.parse(dashboardState);
+        const raw = parsed?.briefing ?? parsed?.briefingOptions ?? parsed?.briefingSettings ?? parsed;
+        if (!raw) return {};
+
+        const maxItems = toFiniteNumber(raw.maxItems ?? raw.max_items ?? raw.briefingMaxItems ?? raw.maxCount);
+        const recentDays = toFiniteNumber(
+            raw.recentDays ?? raw.recent_days ?? raw.briefingRecentDays ?? raw.recentWindowDays,
+        );
+
+        return {
+            maxItems,
+            recentDays,
+        };
+    } catch {
+        return {};
+    }
 }
 
 function getTodayKst() {
@@ -30,16 +63,16 @@ function getTodayKst() {
         .replace(/\./g, '');
 }
 
-function profileToPrompt(profile: UserProfile) {
+function profileToBriefingInput(profile: UserProfile) {
     return `학년: ${profile.grade}학년, 소득분위: ${profile.income}구간, GPA: ${profile.gpa || '미입력'}, 트랙: ${profile.trackId || '미선택'}`;
 }
 
-function fallbackBriefing(noticeRows: Array<{ title: string; url: string; date: string }>) {
+function fallbackBriefing(noticeRows: Array<{ title: string; url: string; date: string }>, options: BriefingOptions = {}) {
     if (noticeRows.length === 0) {
         return '오늘은 새로운 공지가 아직 없습니다.';
     }
 
-    const top = noticeRows.slice(0, 5);
+    const top = noticeRows.slice(0, Math.max(3, Math.min(options.maxItems ?? 5, 5)));
     const lines = top.map((notice, idx) => `${idx + 1}. ${notice.title} (${notice.date})\n${notice.url}`);
     return `오늘의 공지 요약(대체 모드)\n\n${lines.join('\n\n')}`;
 }
@@ -54,6 +87,8 @@ function escapeHtml(raw: string) {
 }
 
 async function getOrCreateBriefing(profile: UserProfile, today: string) {
+    const briefingOptions = resolveBriefingOptions(profile.dashboardState);
+
     const cached = await prisma.dailyBriefing.findFirst({
         where: { userId: profile.id, date: today },
         orderBy: { id: 'desc' },
@@ -65,24 +100,51 @@ async function getOrCreateBriefing(profile: UserProfile, today: string) {
 
     const notices = await prisma.notice.findMany({
         orderBy: { date: 'desc' },
-        take: 30,
+        take: 80,
         select: {
             title: true,
             summary: true,
             url: true,
             date: true,
+            category: true,
+            minGrade: true,
+            maxIncome: true,
+            minGpa: true,
+            scholarshipType: true,
+            deadline: true,
+            tags: {
+                select: {
+                    tag: {
+                        select: { name: true },
+                    },
+                },
+            },
         },
     });
 
     let content: string;
     try {
-        content = await getAIBriefing(notices, profileToPrompt(profile));
+        const preparedNotices = notices.map((item) => ({
+            ...item,
+            tags: item.tags.map((entry) => entry.tag.name),
+        }));
+
+        content = await getAIBriefing(preparedNotices, {
+            grade: profile.grade,
+            income: profile.income,
+            gpa: profile.gpa,
+            trackId: profile.trackId,
+            raw: profileToBriefingInput(profile),
+        }, briefingOptions);
     } catch {
-        content = fallbackBriefing(notices.map((item) => ({
-            title: item.title,
-            url: item.url,
-            date: item.date,
-        })));
+        content = fallbackBriefing(
+            notices.map((item) => ({
+                title: item.title,
+                url: item.url,
+                date: item.date,
+            })),
+            briefingOptions,
+        );
     }
 
     await prisma.dailyBriefing.create({

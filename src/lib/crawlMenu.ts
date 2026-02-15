@@ -56,16 +56,12 @@ export async function crawlCafeteriaMenu() {
                     // Actually, let's filter out garbage but KEEP closure notices
                     // The issue is cross-contamination, not closure notices
 
-                    // Skip if the content looks like it's from a different restaurant (cross-contamination check)
-                    // This is a more aggressive filter: if it contains vacation period notice, we should store it
-                    // but we should NOT store normal menus for a restaurant that's on vacation
-                    const isClosureNotice = item.content.includes('휴가기간') ||
-                        item.content.includes('미운영') ||
-                        item.content.includes('운영중단') ||
-                        item.content.includes('공사');
+                // Skip if the content looks like it's from a different restaurant (cross-contamination check)
+                // This is a more aggressive filter: if it contains vacation period notice, we should store it
+                // but we should NOT store normal menus for a restaurant that's on vacation
 
-                    // If it's not a closure notice, make sure it doesn't have closure keywords mixed in
-                    // This catches "오삼불고기덮밥" being stored for Eunhasu when it should be closed
+                // If it's not a closure notice, make sure it doesn't have closure keywords mixed in
+                // This catches "오삼불고기덮밥" being stored for Eunhasu when it should be closed
 
                     await prisma.cafeteriaMenu.upsert({
                         where: {
@@ -102,8 +98,8 @@ export async function crawlCafeteriaMenu() {
 }
 
 async function extractMenuFromTable(page: Page, tabId: string): Promise<MenuData[]> {
-    return await page.evaluate((tabSelector) => {
-        const results: any[] = [];
+    return await page.evaluate<MenuData[], string>((tabSelector) => {
+        const results: MenuData[] = [];
 
         // Target the SPECIFIC tab by its ID, not just any 'active' tab
         const activeTab = document.querySelector(tabSelector);

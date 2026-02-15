@@ -19,6 +19,7 @@ export function Mascot({ message, autoHideDelay = 5000 }: MascotProps) {
 
     useEffect(() => {
         if (message) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setShowMessage(true);
             const timer = setTimeout(() => setShowMessage(false), autoHideDelay);
             return () => clearTimeout(timer);

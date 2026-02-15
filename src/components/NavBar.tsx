@@ -60,7 +60,7 @@ export function NavBar() {
         >
             <motion.div style={{ scale: logoScale }} className="flex items-center gap-3">
                 <Link href="/" className="hover:opacity-80 transition-all flex items-center gap-2">
-                    {/* Mobile Logo (Shield) */}
+                {/* Mobile Logo (Shield) */}
                     <motion.img
                         src="/mobile-logo.png"
                         alt="충북대학교"
@@ -69,6 +69,7 @@ export function NavBar() {
                         transition={{ duration: 0.5 }}
                     />
                     {/* Desktop Logo (Full Text) */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                         src="https://inform.chungbuk.ac.kr/layouts/INFORM/img/logo_d.png"
                         alt="충북대학교 정보통신공학부"
@@ -91,7 +92,7 @@ export function NavBar() {
                 )}
             </motion.div>
 
-            <div className="flex gap-1 items-center">
+            <div className="flex items-center gap-1">
                 {status === 'authenticated' ? (
                     <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-semibold mr-1">
                         <UserRound className="w-3.5 h-3.5" />
@@ -142,9 +143,11 @@ export function NavBar() {
                     </motion.div>
                 ))}
 
-                <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                    <ModeToggle />
-                </motion.div>
+                <div className="ml-1 pl-1 border-l border-border/50 flex items-center">
+                    <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                        <ModeToggle className={cn(isScrolled ? "h-9 w-9" : "h-10 w-10")} />
+                    </motion.div>
+                </div>
             </div>
         </motion.nav>
     );

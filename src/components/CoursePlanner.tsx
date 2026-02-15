@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 // Type definitions
 type Course = { code: string; name: string; type: string; credit: number; };
@@ -15,16 +14,21 @@ type SemesterData = Record<string, Course[]>;
 type TrackData = { name: string; required: string[]; };
 
 export default function CoursePlanner() {
-    const [takenCourses, setTakenCourses] = useState<string[]>([]);
+    const [takenCourses, setTakenCourses] = useState<string[]>(() => {
+        if (typeof window === 'undefined') return [];
+        const saved = localStorage.getItem('myschoolmate-taken');
+        if (!saved) return [];
+        try {
+            const parsed = JSON.parse(saved);
+            return Array.isArray(parsed) ? parsed.filter((value) => typeof value === 'string') : [];
+        } catch {
+            return [];
+        }
+    });
     const [selectedTrack, setSelectedTrack] = useState<string>('info_net');
 
     const curriculum = curriculumData['2025'] as SemesterData;
     const tracks = curriculumData['tracks'] as Record<string, TrackData>;
-
-    useEffect(() => {
-        const saved = localStorage.getItem('myschoolmate-taken');
-        if (saved) setTakenCourses(JSON.parse(saved));
-    }, []);
 
     useEffect(() => {
         localStorage.setItem('myschoolmate-taken', JSON.stringify(takenCourses));

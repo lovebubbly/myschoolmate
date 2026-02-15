@@ -9,11 +9,45 @@ import { resolveUserProfile } from '@/lib/userProfileResolver';
 
 export const dynamic = 'force-dynamic';
 
+type BriefingOptions = {
+    maxItems?: number;
+    recentDays?: number;
+};
+
+function toFiniteNumber(value: unknown): number | undefined {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return undefined;
+    return Math.trunc(parsed);
+}
+
+function resolveBriefingOptions(dashboardState: string | null | undefined): BriefingOptions {
+    if (!dashboardState) return {};
+
+    try {
+        const parsed = JSON.parse(dashboardState);
+        const raw = parsed?.briefing ?? parsed?.briefingOptions ?? parsed?.briefingSettings ?? parsed;
+        if (!raw) return {};
+
+        const maxItems = toFiniteNumber(raw.maxItems ?? raw.max_items ?? raw.briefingMaxItems ?? raw.maxCount);
+        const recentDays = toFiniteNumber(
+            raw.recentDays ?? raw.recent_days ?? raw.briefingRecentDays ?? raw.recentWindowDays,
+        );
+
+        return {
+            maxItems,
+            recentDays,
+        };
+    } catch {
+        return {};
+    }
+}
+
 export async function GET(request: Request) {
     try {
         const session = await resolveUserProfile(request);
         const userId = session.userId;
         const profile = session.profile;
+        const briefingOptions = resolveBriefingOptions(profile.dashboardState ?? undefined);
 
         // 1. Check Cache (DailyBriefing)
         // Get today's date in KST (YYYY-MM-DD)
@@ -43,11 +77,35 @@ export async function GET(request: Request) {
         // 2. Generate New
         const notices = await prisma.notice.findMany({
             orderBy: { date: 'desc' },  // Sort by date, not ID (crawler order may differ)
-            take: 30 // Look at more notices
+            take: 80, // Look at broader range for better filtering
+            include: {
+                tags: {
+                    include: { tag: true },
+                },
+            },
         });
 
-        const profileStr = `학년: ${profile.grade}학년, 소득분위: ${profile.income}구간, GPA: ${profile.gpa || '미입력'}, 트랙: ${profile.trackId || '미선택'}`;
-        const briefing = await getAIBriefing(notices, profileStr);
+        const preparedNotices = notices.map((notice) => ({
+            title: notice.title,
+            summary: notice.summary || '',
+            url: notice.url,
+            date: notice.date,
+            category: notice.category,
+            minGrade: notice.minGrade,
+            maxIncome: notice.maxIncome,
+            minGpa: notice.minGpa,
+            scholarshipType: notice.scholarshipType,
+            deadline: notice.deadline || '',
+            tags: notice.tags.map((entry) => entry.tag.name),
+        }));
+
+        const briefing = await getAIBriefing(preparedNotices, {
+            grade: profile.grade,
+            income: profile.income,
+            gpa: profile.gpa,
+            trackId: profile.trackId,
+            raw: `학년: ${profile.grade}학년, 소득분위: ${profile.income}구간, GPA: ${profile.gpa || '미입력'}, 트랙: ${profile.trackId || '미선택'}`,
+        }, briefingOptions);
 
         // 3. Save Cache
         await prisma.dailyBriefing.create({

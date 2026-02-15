@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Utensils, RefreshCw, Coffee, Sun, Moon } from "lucide-react";
@@ -25,36 +25,13 @@ export function CafeteriaWidget() {
     const [selectedMeal, setSelectedMeal] = useState<MealType>('LUNCH');
     const [selectedDate, setSelectedDate] = useState(new Date());
 
-    const formatDate = (date: Date) => {
+    const formatDate = useCallback((date: Date) => {
         const m = String(date.getMonth() + 1).padStart(2, '0');
         const d = String(date.getDate()).padStart(2, '0');
         return `${m}.${d}`;
-    };
+    }, []);
 
-    const getDayLabel = (date: Date) => {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const target = new Date(date);
-        target.setHours(0, 0, 0, 0);
-
-        if (start.getTime() === target.getTime()) return '오늘';
-        const days = ['일', '월', '화', '수', '목', '금', '토'];
-        return `${formatDate(date)}(${days[date.getDay()]})`;
-    };
-
-    useEffect(() => {
-        fetchMenus(selectedDate);
-
-        const isToday = new Date().toDateString() === selectedDate.toDateString();
-        if (isToday) {
-            const hour = new Date().getHours();
-            if (hour < 10) setSelectedMeal('BREAKFAST');
-            else if (hour < 14) setSelectedMeal('LUNCH');
-            else setSelectedMeal('DINNER');
-        }
-    }, [selectedDate]);
-
-    const fetchMenus = async (date: Date) => {
+    const fetchMenus = useCallback(async (date: Date) => {
         setLoading(true);
         try {
             const dateStr = formatDate(date);
@@ -67,7 +44,31 @@ export function CafeteriaWidget() {
             console.error(e);
         }
         setLoading(false);
-    };
+    }, [formatDate]);
+
+    const getDayLabel = useCallback((date: Date) => {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const target = new Date(date);
+        target.setHours(0, 0, 0, 0);
+
+        if (start.getTime() === target.getTime()) return '오늘';
+        const days = ['일', '월', '화', '수', '목', '금', '토'];
+        return `${formatDate(date)}(${days[date.getDay()]})`;
+    }, [formatDate]);
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        fetchMenus(selectedDate);
+
+        const isToday = new Date().toDateString() === selectedDate.toDateString();
+        if (isToday) {
+            const hour = new Date().getHours();
+            if (hour < 10) setSelectedMeal('BREAKFAST');
+            else if (hour < 14) setSelectedMeal('LUNCH');
+            else setSelectedMeal('DINNER');
+        }
+    }, [fetchMenus, selectedDate]);
 
     const changeDate = (days: number) => {
         const newDate = new Date(selectedDate);

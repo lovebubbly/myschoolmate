@@ -190,6 +190,56 @@ function buildCategorySummariesForProgress(
     });
 }
 
+function buildCategoryRequirementChecksFromSummaries(
+    categorySummaries: CategorySummary[],
+): CategoryRequirementCheck[] {
+    return categorySummaries.map((summary) => {
+        const requiredCredits = summary.requiredCredits;
+        const completedCredits = summary.completedCredits;
+        const requiredCourseCount = summary.requiredCourseCount;
+        const completedCourseCount = summary.completedCourseCount;
+        const required = requiredCredits > 0 || requiredCourseCount > 0;
+        const satisfied = !required || completedCredits >= requiredCredits;
+        const missingCredits = required ? Math.max(0, requiredCredits - completedCredits) : 0;
+
+        return {
+            categoryCode: summary.categoryCode,
+            categoryName: summary.categoryName,
+            requiredCredits,
+            completedCredits,
+            requiredCourseCount,
+            completedCourseCount,
+            required,
+            satisfied,
+            missingCredits,
+        };
+    });
+}
+
+function buildRequirementStatusFromProgress(
+    requiredCourseIds: string[],
+    trackCompletionCourseIds: string[],
+    missingRequiredCourseNames: string[],
+    categorySummaries: CategorySummary[],
+): TrackRequirementStatus {
+    const completionSet = new Set(trackCompletionCourseIds);
+    const completedRequiredCount = requiredCourseIds.filter((id) => completionSet.has(id)).length;
+    const requiredCourseCount = requiredCourseIds.length;
+    const categoryChecks = buildCategoryRequirementChecksFromSummaries(categorySummaries);
+    const requiredCoursesSatisfied = completedRequiredCount >= requiredCourseCount && missingRequiredCourseNames.length === 0;
+    const categoryRequirementsSatisfied = categoryChecks.every((check) => check.satisfied);
+
+    return {
+        requiredCoursesSatisfied,
+        categoryRequirementsSatisfied,
+        overallSatisfied: requiredCoursesSatisfied && categoryRequirementsSatisfied,
+        requiredCourseCount,
+        completedCourseCount: completedRequiredCount,
+        missingRequiredCourseNamesCount: missingRequiredCourseNames.length,
+        categoryChecks,
+    };
+}
+
 function requirementStatusPillClass(isSatisfied: boolean): string {
     return isSatisfied
         ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
@@ -217,13 +267,19 @@ function buildActiveSummary(
         requirement.track.categorySummaries,
     );
     const courseCompletionRate = requiredCount > 0 ? Math.round((requiredCompletedCount / requiredCount) * 100) : 0;
+    const requirementStatus = buildRequirementStatusFromProgress(
+        requiredCourseIds,
+        trackCompletionCourseIds,
+        requirement.track.missingRequiredCourseNames,
+        categorySummaries,
+    );
 
     return {
         ...requirement.track,
         completionByCourseIds: trackCompletionCourseIds,
         completedCourseCount: requiredCompletedCount,
         courseCompletionRate,
-        requirementStatus: requirement.track.requirementStatus,
+        requirementStatus,
         categorySummaries,
     };
 }

@@ -5,7 +5,6 @@ import React, { useEffect, useState } from 'react';
 import { NoticeCard } from '@/components/NoticeCard';
 import { Mascot } from '@/components/Mascot';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -114,8 +113,8 @@ export default function DashboardClient({ initialNotices }: { initialNotices: No
             <section>
                 <Card className="bg-gradient-to-r from-indigo-50 to-purple-50 border-none shadow-sm">
                     <CardHeader>
-                        <div className="flex justify-between items-center">
-                            <CardTitle className="text-xl text-indigo-900">✨ Today's AI Briefing</CardTitle>
+                            <div className="flex justify-between items-center">
+                                <CardTitle className="text-xl text-indigo-900">✨ Today&apos;s AI Briefing</CardTitle>
                             <Button size="sm" variant="outline" onClick={getBriefing} disabled={loadingAI}>
                                 {loadingAI ? 'Generating...' : 'Refresh'}
                             </Button>

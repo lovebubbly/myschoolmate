@@ -28,16 +28,18 @@ async function main() {
     try {
         const result = await model.generateContent('Hello, are you there?');
         console.log('Response:', result.response.text());
-    } catch (e: any) {
-        console.error('Error with 3-flash-preview:', e.message);
+    } catch (e) {
+        const error = e instanceof Error ? e : new Error('Unknown error');
+        console.error('Error with 3-flash-preview:', error.message);
 
         console.log('--- Retrying with gemini-2.0-flash-exp ---');
         try {
             const model2 = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
             const result2 = await model2.generateContent('Hello');
             console.log('Response 2.0:', result2.response.text());
-        } catch (e2: any) {
-            console.error('Error with 2.0-flash-exp:', e2.message);
+        } catch (e2) {
+            const error = e2 instanceof Error ? e2 : new Error('Unknown error');
+            console.error('Error with 2.0-flash-exp:', error.message);
 
         }
     }

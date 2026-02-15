@@ -1,11 +1,13 @@
 import curriculumRaw from '@/lib/curriculum.json';
+import { prisma } from '@/lib/prisma';
 
 type JsonObject = Record<string, unknown>;
 
 export type GradeCategory = 'MAJOR_MANDATORY' | 'MAJOR_ELECTIVE' | 'GENERAL' | 'CROSS' | 'OTHER';
 
-type PlanBuildOptions = {
+type TrackSourceOptions = {
     trackIdByKey?: TrackIdByKey;
+    catalog?: CurriculumCatalogSnapshot;
 };
 
 export type TrackIdByKey = Record<string, number>;
@@ -95,6 +97,7 @@ export type CurriculumCatalogSnapshot = {
         academicYear: number;
         label: string;
         source: string;
+        sourceYear: string;
         isActive: boolean;
         trackRequirements: Record<string, { requiredCourses: string[]; categoryRequirements: Partial<Record<GradeCategory, number>> }>;
     }>;
@@ -108,9 +111,27 @@ type YearTrackRequirement = {
 type ParsedVersion = {
     academicYear: number;
     label: string;
+    source: string;
     sourceYear: string;
     isActive: boolean;
     trackRequirements: Record<string, YearTrackRequirement>;
+};
+
+type DbTrackRequirementRow = {
+    requiredCourses: string;
+    categoryRequirements: string | null;
+    track: {
+        id: number;
+        name: string;
+    };
+};
+
+type DbCurriculumVersionRow = {
+    academicYear: number;
+    label: string;
+    source: string | null;
+    isActive: boolean;
+    requirements: DbTrackRequirementRow[];
 };
 
 const CATEGORY_LABELS: Record<GradeCategory, string> = {
@@ -203,6 +224,26 @@ function asStringArray(value: unknown): string[] {
         .filter((item): item is string => item.length > 0);
 }
 
+function parseJsonStringArray(raw: string | null): string[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return asStringArray(parsed);
+    } catch {
+        return [];
+    }
+}
+
+function parseJsonCategoryRequirements(raw: string | null): Partial<Record<GradeCategory, number>> {
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        return normalizeCategoryRequirements(parsed);
+    } catch {
+        return {};
+    }
+}
+
 function normalizeCategoryKey(raw: string): GradeCategory | null {
     const normalized = normalizeName(raw);
     if (normalized === 'major_mandatory' || normalized === 'majormandatory' || normalized.includes('전공필수')) {
@@ -254,6 +295,110 @@ function getCatalogSourceYears(root: JsonObject): string[] {
 function getTrackIdByKey(trackIdByKey?: TrackIdByKey): TrackIdByKey {
     if (!trackIdByKey) return {};
     return trackIdByKey;
+}
+
+function normalizeTrackName(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/\s+/g, '')
+        .replace(/\(([^)]*)\)/g, '')
+        .trim();
+}
+
+async function getCurriculumCatalogSnapshotFromDbRows(): Promise<CurriculumCatalogSnapshot | null> {
+    const baseline = getCurriculumCatalogSnapshot();
+    try {
+        const dbVersions = await prisma.curriculumVersion.findMany({
+            orderBy: { academicYear: 'asc' },
+            include: {
+                requirements: {
+                    include: {
+                        track: {
+                            select: {
+                                id: true,
+                                name: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (dbVersions.length === 0) {
+            return null;
+        }
+
+        const trackNameToKey = new Map<string, string>(
+            Object.entries(baseline.tracks).map(([trackKey, track]) => [
+                normalizeTrackName(track.name),
+                trackKey,
+            ]),
+        );
+
+        const mergedVersions = new Map<number, ParsedVersion>(
+            baseline.versions.map((version) => [
+                version.academicYear,
+                {
+                    ...version,
+                    source: version.source || String(version.academicYear),
+                    sourceYear: String((version as { sourceYear?: string }).sourceYear ?? version.academicYear),
+                },
+            ]),
+        );
+
+        dbVersions.forEach((dbVersion: DbCurriculumVersionRow) => {
+            const sourceYear = String(dbVersion.source ?? dbVersion.academicYear);
+            const existing: ParsedVersion = mergedVersions.get(dbVersion.academicYear) ?? {
+                academicYear: dbVersion.academicYear,
+                label: `${dbVersion.academicYear} 학번`,
+                source: sourceYear,
+                sourceYear,
+                isActive: dbVersion.isActive,
+                trackRequirements: {},
+            };
+
+            const trackRequirements: Record<string, YearTrackRequirement> = {
+                ...existing.trackRequirements,
+            };
+
+            dbVersion.requirements.forEach((requirement) => {
+                const trackKey = trackNameToKey.get(normalizeTrackName(requirement.track.name));
+                if (!trackKey) return;
+
+                const requiredCourses = parseJsonStringArray(requirement.requiredCourses);
+                const categoryRequirements = parseJsonCategoryRequirements(requirement.categoryRequirements);
+                const fallback = existing.trackRequirements[trackKey];
+
+                trackRequirements[trackKey] = {
+                    requiredCourses: dedupeOrdered(requiredCourses.length > 0 ? requiredCourses : fallback?.requiredCourses ?? []),
+                    categoryRequirements: Object.keys(categoryRequirements).length > 0
+                        ? categoryRequirements
+                        : fallback?.categoryRequirements ?? {},
+                };
+            });
+
+            mergedVersions.set(dbVersion.academicYear, {
+                academicYear: dbVersion.academicYear,
+                label: dbVersion.label || existing.label || `${dbVersion.academicYear} 학번`,
+                source: existing.source || sourceYear,
+                sourceYear,
+                isActive: dbVersion.isActive,
+                trackRequirements,
+            });
+        });
+
+        return {
+            tracks: baseline.tracks,
+            versions: Array.from(mergedVersions.values()).sort((a, b) => a.academicYear - b.academicYear),
+        };
+    } catch {
+        return null;
+    }
+}
+
+export async function getCurriculumCatalogSnapshotWithDbFallback(): Promise<CurriculumCatalogSnapshot> {
+    const dbSnapshot = await getCurriculumCatalogSnapshotFromDbRows();
+    return dbSnapshot ?? getCurriculumCatalogSnapshot();
 }
 
 function parseTrackCategoryDefaults(root: JsonObject): Record<string, Partial<Record<GradeCategory, number>>> {
@@ -340,6 +485,7 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
         return numericYears.map((year) => ({
             academicYear: year,
             label: `${year} 학번`,
+            source: `${year}`,
             sourceYear: `${year}`,
             isActive: year === TRACKS_RANGE.max,
             trackRequirements: Object.entries(legacyTracks).reduce<Record<string, YearTrackRequirement>>((acc, [trackKey, track]) => {
@@ -390,6 +536,7 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
         versions.push({
             academicYear,
             label: typeof raw.label === 'string' ? raw.label : `${academicYear} 학번`,
+            source: `${toInt(raw.sourceYear) || yearKey}`,
             sourceYear: `${toInt(raw.sourceYear) || yearKey}`,
             isActive: Boolean(raw.isActive),
             trackRequirements: normalizedTrackRequirements,
@@ -659,8 +806,12 @@ function buildCategorySummaries(
     });
 }
 
-export function resolveCurriculumYearRange(): { min: number; max: number; years: number[] } {
-    const versions = parseVersions(curriculumRaw as JsonObject);
+export function resolveCurriculumYearRange(catalog: CurriculumCatalogSnapshot = getCurriculumCatalogSnapshot()): {
+    min: number;
+    max: number;
+    years: number[];
+} {
+    const versions = catalog.versions;
     const years = versions.map((v) => v.academicYear).sort((a, b) => a - b);
     return {
         min: years[0] ?? TRACKS_RANGE.min,
@@ -674,10 +825,11 @@ export function getCurriculumCatalogSnapshot(): CurriculumCatalogSnapshot {
     const tracks = parseLegacyTracks(root);
     const availableYears = getCatalogSourceYears(root);
     const versions = parseVersions(root).map((version) => ({
-        academicYear: version.academicYear,
-        label: version.label,
-        source: version.sourceYear,
-        isActive: version.isActive,
+            academicYear: version.academicYear,
+            label: version.label,
+            source: version.sourceYear,
+            sourceYear: version.sourceYear,
+            isActive: version.isActive,
         trackRequirements: Object.entries(version.trackRequirements).reduce((acc, [trackKey, trackRequirement]) => {
             const versionSourceYear = resolveCatalogYear(root, version.sourceYear, availableYears);
             const catalogCourses = extractCourses(root[versionSourceYear], versionSourceYear);
@@ -698,24 +850,28 @@ export function getCurriculumCatalogSnapshot(): CurriculumCatalogSnapshot {
     return { tracks, versions };
 }
 
+type BuildPlanOptions = TrackSourceOptions & {
+    requestedYear?: number | null;
+    completedCourseIds?: string[];
+    profileCohortYear?: number | null;
+    profileGrade?: number | null;
+};
+
+type PlanBuildOptions = TrackSourceOptions;
+
 export function buildPlanForTrack(
     trackId: number,
-    options: {
-        requestedYear?: number | null;
-        completedCourseIds?: string[];
-        profileCohortYear?: number | null;
-        profileGrade?: number | null;
-        trackIdByKey?: TrackIdByKey;
-    } = {},
+    options: BuildPlanOptions = {},
 ): PlanningRequirementPayload {
     const root = curriculumRaw as JsonObject;
-    const versions = parseVersions(root);
+    const catalog = options.catalog ?? getCurriculumCatalogSnapshot();
+    const versions = catalog.versions;
     if (versions.length === 0) {
         throw new Error('No curriculum version metadata found.');
     }
 
     const allCatalogYears = getCatalogSourceYears(root);
-    const tracks = parseLegacyTracks(root);
+    const tracks = catalog.tracks;
     const trackKeys = Object.keys(tracks);
     const targetTrackKey = resolveTrackKeyById(trackId, trackKeys, options.trackIdByKey);
     if (!targetTrackKey) {
@@ -800,13 +956,14 @@ export function buildTracksForYear(
     options: PlanBuildOptions = {},
 ): { tracks: CurriculumApiTrack[]; academicYear: number; sourceYear: string; availableYears: number[] } {
     const root = curriculumRaw as JsonObject;
-    const versions = parseVersions(root);
+    const catalog = options.catalog ?? getCurriculumCatalogSnapshot();
+    const versions = catalog.versions;
     if (versions.length === 0) {
         throw new Error('No curriculum version metadata found.');
     }
     const range = versions.map((v) => v.academicYear).sort((a, b) => a - b);
     const version = resolveClosestVersion(versions, requestedYear);
-    const tracks = parseLegacyTracks(root);
+    const tracks = catalog.tracks;
     const allCatalogYears = getCatalogSourceYears(root);
     const catalogYear = resolveCatalogYear(root, version.sourceYear, allCatalogYears);
     const catalogCourses = extractCourses(root[catalogYear], catalogYear);

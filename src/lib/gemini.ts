@@ -1,17 +1,50 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { extractApplicationDeadlineFromText } from '@/lib/deadlineExtractor';
-import { ALLOWED_TAGS, extractTagsByRegex, normalizeTags } from '@/lib/tagging';
+import { ALLOWED_TAGS, extractTagsByRegex, normalizeTags } from './tagging';
 
-// Time-aware greeting helper
-function getTimeGreeting(): { greeting: string; emoji: string } {
-    const hour = new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Seoul' });
-    const h = parseInt(hour);
-    if (h >= 5 && h < 12) return { greeting: '좋은 아침이에요', emoji: '☀️' };
-    if (h >= 12 && h < 17) return { greeting: '좋은 오후예요', emoji: '🌤️' };
-    if (h >= 17 && h < 21) return { greeting: '좋은 저녁이에요', emoji: '🌆' };
-    return { greeting: '늦은 밤이네요', emoji: '🌙' };
-}
+type BriefingProfileInput = {
+    grade?: number | null;
+    income?: number | null;
+    gpa?: number | null;
+    trackId?: number | null;
+    raw?: string;
+};
+
+type BriefingNoticeInput = {
+    title: string;
+    summary?: string | null;
+    url?: string | null;
+    date?: string | null;
+    category?: string | null;
+    minGrade?: number | null;
+    maxIncome?: number | null;
+    minGpa?: number | null;
+    scholarshipType?: string | null;
+    deadline?: string | null;
+    tags?: Array<string | null>;
+};
+
+type BriefingOptions = {
+    maxItems?: number;
+    recentDays?: number;
+};
+
+type BriefingProfile = {
+    grade: number;
+    income: number;
+    gpa: number;
+    trackId: number | null;
+    raw: string;
+};
+
+const BRIEFING_MAX_ITEMS = 14;
+const BRIEFING_RECENT_DAYS = 60;
+const BRIEFING_MAX_ITEMS_MIN = 3;
+const BRIEFING_MAX_ITEMS_MAX = 80;
+const BRIEFING_RECENT_DAYS_MIN = 7;
+const BRIEFING_RECENT_DAYS_MAX = 365;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Regex Helpers
 function extractByRegex(title: string, body: string) {
@@ -76,7 +109,147 @@ Body: ${body.slice(0, 1500)}
     }
 }
 
-export async function getAIBriefing(notices: any[], userProfile: string) {
+function parseNumberOrFallback(value: unknown, fallback: number): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBriefingProfile(profile: string | BriefingProfileInput): BriefingProfile {
+    if (typeof profile === 'string') {
+        const gradeMatch = profile.match(/(\d+)\s*학년/);
+        const incomeMatch = profile.match(/(\d+)\s*구간/);
+        const gpaMatch = profile.match(/GPA:\s*([0-9]+(?:\.[0-9]+)?)/i);
+
+        return {
+            grade: parseNumberOrFallback(gradeMatch?.[1], 1),
+            income: parseNumberOrFallback(incomeMatch?.[1], 10),
+            gpa: parseNumberOrFallback(gpaMatch?.[1], 0),
+            trackId: null,
+            raw: profile,
+        };
+    }
+
+    return {
+        grade: parseNumberOrFallback(profile.grade, 1),
+        income: parseNumberOrFallback(profile.income, 10),
+        gpa: parseNumberOrFallback(profile.gpa, 0),
+        trackId: profile.trackId ?? null,
+        raw: profile.raw || `학년: ${parseNumberOrFallback(profile.grade, 1)}학년, 소득분위: ${parseNumberOrFallback(profile.income, 10)}구간, GPA: ${parseNumberOrFallback(profile.gpa, 0)}, 트랙: ${profile.trackId || '미선택'}`,
+    };
+}
+
+function toTimestamp(value?: string | null): number | null {
+    if (!value) return null;
+
+    const match = value.match(/([12]\d{3})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})/);
+    if (!match) return null;
+
+    const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function toSafeInt(value: unknown, fallback: number, min: number, max: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    const rounded = Math.trunc(parsed);
+    if (Number.isNaN(rounded)) return fallback;
+    if (rounded < min) return min;
+    if (rounded > max) return max;
+    return rounded;
+}
+
+function normalizeText(value: string | null | undefined): string {
+    return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function getNoticeTags(notice: BriefingNoticeInput): string[] {
+    return Array.isArray(notice.tags)
+        ? notice.tags.map((tag) => normalizeText(tag)).filter(Boolean)
+        : [];
+}
+
+function isHighIncomeNeedBased(notice: BriefingNoticeInput, profile: BriefingProfile): boolean {
+    if (profile.income < 9) return false;
+
+    const scholarshipType = normalizeText(notice.scholarshipType);
+    const needBasedScholarshipTypes = new Set([
+        'livingsupport',
+        'livingsupporting',
+        'tuition',
+        'tuitionaid',
+        'scholarship',
+        'needbased',
+        'need-based',
+        '국가근로',
+        '국가장학',
+    ]);
+
+    if (needBasedScholarshipTypes.has(scholarshipType)) return true;
+
+    if (typeof notice.maxIncome === 'number' && notice.maxIncome <= 8) return true;
+
+    const tags = getNoticeTags(notice);
+
+    const text = [notice.title, notice.summary, notice.category, notice.scholarshipType, notice.deadline]
+        .map((value) => normalizeText(value))
+        .join(' ');
+
+    const needKeywords = ['국가장학', '국가근로', '저소득', '주거안정', '기초생활', '기초수급', '차상위', '도담이', '근로장학'];
+    const hasNeedTag = tags.includes('장학') || tags.includes('기초생활') || tags.includes('차상위') || tags.includes('기초수급');
+    const hasNeedKeyword = needKeywords.some((keyword) => text.includes(keyword));
+
+    return hasNeedTag || hasNeedKeyword;
+}
+
+function isCareerNotice(notice: BriefingNoticeInput): boolean {
+    const tags = getNoticeTags(notice);
+    if (tags.includes('취업') || tags.includes('인턴') || tags.includes('채용') || tags.includes('프로젝트') || tags.includes('연구')) {
+        return true;
+    }
+
+    const text = normalizeText([notice.title, notice.summary, notice.category, notice.scholarshipType].join(' '));
+    const careerKeywords = ['인턴', '현장실습', '실습', '채용', '취업', '산학', '기업', '현장'];
+
+    if (normalizeText(notice.scholarshipType) === 'job') return true;
+    return careerKeywords.some((keyword) => text.includes(keyword));
+}
+
+function getRecencyScore(ts: number | null, now: number): number {
+    if (ts === null) return -5;
+
+    const ageInDays = Math.floor((now - ts) / MS_PER_DAY);
+
+    if (ageInDays <= 30) return 45;
+    if (ageInDays <= 60) return 30;
+    if (ageInDays <= 90) return 15;
+    return 0;
+}
+
+function isProfileMatch(notice: BriefingNoticeInput, profile: BriefingProfile): boolean {
+    if (typeof notice.minGrade === 'number' && profile.grade < notice.minGrade) return false;
+    if (typeof notice.minGpa === 'number' && profile.gpa > 0 && notice.minGpa > profile.gpa) return false;
+    return true;
+}
+
+function scoreNotice(notice: BriefingNoticeInput & { ts: number | null }, profile: BriefingProfile): number {
+    let score = 0;
+
+    if (isCareerNotice(notice)) score += 30;
+    if (isHighIncomeNeedBased(notice, profile)) score -= 120;
+
+    const scholarshipType = normalizeText(notice.scholarshipType);
+    if (scholarshipType === 'job') score += 20;
+    if (scholarshipType === 'program') score += 10;
+    if (scholarshipType === 'livingsupport') score -= 30;
+
+    return score;
+}
+
+export async function getAIBriefing(
+    notices: BriefingNoticeInput[],
+    userProfile: string | BriefingProfileInput,
+    options?: BriefingOptions,
+) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('Missing GEMINI_API_KEY environment variable');
 
@@ -84,9 +257,9 @@ export async function getAIBriefing(notices: any[], userProfile: string) {
     // gemini-2.5-flash-lite: stable, cost-effective, 1M context
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
-    // Parse user profile for pre-filtering
-    const incomeMatch = userProfile.match(/(\d+)구간/);
-    const userIncome = incomeMatch ? parseInt(incomeMatch[1]) : 5;
+    const profile = parseBriefingProfile(userProfile);
+    const maxItems = toSafeInt(options?.maxItems, BRIEFING_MAX_ITEMS, BRIEFING_MAX_ITEMS_MIN, BRIEFING_MAX_ITEMS_MAX);
+    const recentDays = toSafeInt(options?.recentDays, BRIEFING_RECENT_DAYS, BRIEFING_RECENT_DAYS_MIN, BRIEFING_RECENT_DAYS_MAX);
 
     const hour = parseInt(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Seoul' }));
     let timeContext = "Daytime";
@@ -94,38 +267,67 @@ export async function getAIBriefing(notices: any[], userProfile: string) {
     else if (hour >= 18 && hour < 22) timeContext = "Evening";
     else if (hour >= 22 || hour < 5) timeContext = "Late Night";
 
-    // Pre-filter notices based on user profile (reduce token costs)
-    let filteredNotices = notices;
+    const now = Date.now();
+    const recentCutoff = now - recentDays * MS_PER_DAY;
 
-    // Income 9-10: High income users - filter out need-based scholarships
-    if (userIncome >= 9) {
-        filteredNotices = notices.filter(n => {
-            const title = (n.title || '').toLowerCase();
-            const summary = (n.summary || '').toLowerCase();
-            const text = title + ' ' + summary;
-            // Filter out obvious need-based keywords
-            const needBasedKeywords = ['기초생활', '차상위', '기초수급', '저소득'];
-            return !needBasedKeywords.some(kw => text.includes(kw));
+    const rankedCandidates = notices
+        .map((notice) => ({
+            ...notice,
+            ts: toTimestamp(notice.date),
+        }))
+        .filter((notice) => isProfileMatch(notice, profile))
+        .map((notice) => ({
+            ...notice,
+            score: scoreNotice(notice, profile) + getRecencyScore(notice.ts, now),
+        }))
+        .filter((notice) => {
+            if (profile.income >= 9 && isHighIncomeNeedBased(notice, profile) && notice.score < 0 && !isCareerNotice(notice)) {
+                return false;
+            }
+            return true;
+        })
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return (b.ts || 0) - (a.ts || 0);
         });
-    }
 
-    // Sort by date (newest first) and take recent ones
-    const recentNotices = filteredNotices
-        .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
-        .slice(0, 15);  // Reduced from 20 to 15 for token efficiency
+    const highIncomeSafeCandidates = profile.income >= 9
+        ? rankedCandidates.filter((notice) => !(isHighIncomeNeedBased(notice, profile) && !isCareerNotice(notice)))
+        : rankedCandidates;
 
-    // Include title, summary, link, and date for better AI judgment
-    const noticeData = recentNotices.map(n => ({
+    const recentCandidates = (highIncomeSafeCandidates.length > 0 ? highIncomeSafeCandidates : rankedCandidates)
+        .filter((notice) => notice.ts === null || notice.ts >= recentCutoff);
+    const selectedCandidates = (recentCandidates.length > 0 ? recentCandidates : rankedCandidates)
+        .slice(0, maxItems);
+
+    const noticeData = selectedCandidates.map((n) => ({
         title: n.title,
-        summary: n.summary?.slice(0, 100) || '',
+        summary: n.summary?.slice(0, 120) || '',
         url: n.url || '',
-        date: n.date || ''
+        date: n.date || '',
+        deadline: n.deadline || '',
+        minGrade: n.minGrade ?? null,
+        maxIncome: n.maxIncome ?? null,
+        minGpa: n.minGpa ?? null,
+        scholarshipType: n.scholarshipType || '',
+        tags: getNoticeTags(n),
     }));
+
+    if (noticeData.length === 0) {
+        return '현재 추천 가능한 공지사항이 없습니다. 잠시 뒤 다시 확인해 주세요.';
+    }
 
     const prompt = `
 당신은 정보통신공학부 학생을 위한 학사 도우미입니다.
 
-사용자 프로필: ${userProfile}
+사용자 프로필: ${profile.raw}
+
+우선순위:
+- 최근 ${recentDays}일 이내 공지를 우선 반영
+- 최근성 가중치: 30일 이내 +45, 60일 이내 +30, 90일 이내 +15
+- 소득분위가 높으면(9~10) 소득요건 낮은 장학/근로/도담이류는 가급적 배제
+- 인턴/취업/현장실습/프로젝트는 우선 추천
+- 마감일은 유효한 값이 있으면 최신 공지를 가중치 반영
 
 최근 공지사항 (JSON):
 ${JSON.stringify(noticeData, null, 2)}
@@ -140,7 +342,7 @@ ${JSON.stringify(noticeData, null, 2)}
     -   **Opening**: Creative, witty, and casual greeting. **Avoid** cliché "Good morning/afternoon". Use something fresh like "Studying hard?", "Time for a break?", "Burning the midnight oil?", or "Ready to start the day?".
     -   **Body**: Warm, encouraging, concise. Like a helpful senior.
 5.  **User Profile**:
-    -   ${userProfile}
+    -   ${profile.raw}
     -   **Income Bracket**: 0 (High Need) ~ 10 (High Income).
         -   **Income 0~8**: High financial need. Target for need-based scholarships.
         -   **Income 9~10**: High income. **NOT** eligible for need-based aid. Do NOT suggest need-based scholarships.
@@ -204,7 +406,7 @@ export async function analyzeNotice(title: string, body: string, category?: stri
 }> {
     // 1. Regex Extraction (Cost-free, high precision for format)
     const regexData = extractByRegex(title, body);
-    const regexTags = extractTagsByRegex({ title, body, category });
+    const regexTags = extractTagsByRegex({ title, body, category: category ?? undefined });
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('Missing GEMINI_API_KEY environment variable');
@@ -317,7 +519,7 @@ ${rawContent.slice(0, 8000)}`;
 
     try {
         const result = await model.generateContent(prompt);
-        let formatted = result.response.text();
+        const formatted = result.response.text();
 
         // Post-processing fix for common table issues
         if (formatted) {

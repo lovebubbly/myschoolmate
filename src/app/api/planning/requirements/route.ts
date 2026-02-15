@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { resolveUserProfile } from '@/lib/userProfileResolver';
 import { applySessionCookieHeader } from '@/lib/sessionUser';
-import { buildPlanForTrack, resolveCurriculumYearRange } from '@/lib/planningRequirements';
+import { buildPlanForTrack, getCurriculumCatalogSnapshotWithDbFallback, resolveCurriculumYearRange } from '@/lib/planningRequirements';
 import { ensurePlanningCatalogSeeded } from '@/lib/planningCatalogSeed';
 
 async function loadCompletionByTrack(userId: number, trackId: number): Promise<string[]> {
@@ -25,6 +25,7 @@ function parseTrackId(value: string | null): number | null {
 export async function GET(request: Request) {
     try {
         const seed = await ensurePlanningCatalogSeeded();
+        const catalog = await getCurriculumCatalogSnapshotWithDbFallback();
         const trackIdByKey = Object.fromEntries(seed.tracks.map((track) => [track.trackKey, track.trackId]));
         const { searchParams } = new URL(request.url);
         const session = await resolveUserProfile(request);
@@ -46,6 +47,7 @@ export async function GET(request: Request) {
             profileCohortYear: session.profile.cohortYear ?? null,
             profileGrade: session.profile.grade,
             trackIdByKey,
+            catalog,
         });
         const completionByTrack = { [String(trackId)]: payload.track.completionByCourseIds };
 
@@ -59,7 +61,7 @@ export async function GET(request: Request) {
                 cohortYear: session.profile.cohortYear,
                 trackId,
             },
-            availableYears: resolveCurriculumYearRange().years,
+            availableYears: resolveCurriculumYearRange(catalog).years,
         });
 
         applySessionCookieHeader(response, session.setCookie);

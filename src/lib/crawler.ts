@@ -3,7 +3,7 @@ import { chromium, Page } from 'playwright';
 import { prisma } from '@/lib/prisma';
 import { analyzeNotice } from './gemini';
 import { extractApplicationDeadlineFromText } from '@/lib/deadlineExtractor';
-import { extractTagsByRegex, normalizeTags } from '@/lib/tagging';
+import { extractTagsByRegex, normalizeTags } from './tagging';
 
 export interface NoticeData {
     title: string;
@@ -38,33 +38,41 @@ function normalizeNoticeUrl(rawUrl: string) {
     }
 }
 
+function toTagSlug(rawName: string) {
+    return rawName
+        .toLowerCase()
+        .replace(/[^a-z0-9가-힣]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
 async function syncNoticeTags(noticeId: number, tags: string[]) {
     const normalized = normalizeTags(tags || []);
-    await prisma.noticeTag.deleteMany({ where: { noticeId } });
+    await prisma.noticeTagOnNotice.deleteMany({ where: { noticeId } });
     if (normalized.length === 0) return;
 
-    const existingTags = await prisma.tag.findMany({
+    const existingTags = await prisma.noticeTag.findMany({
         where: { name: { in: normalized } },
     });
     const existingNames = new Set(existingTags.map((tag) => tag.name));
     const toCreate = normalized.filter((name) => !existingNames.has(name));
 
     if (toCreate.length > 0) {
-        await prisma.tag.createMany({
-            data: toCreate.map((name) => ({ name })),
-            skipDuplicates: true,
+        await prisma.noticeTag.createMany({
+            data: toCreate.map((name) => ({
+                name,
+                slug: toTagSlug(name),
+            })),
         });
     }
 
-    const finalTags = await prisma.tag.findMany({
+    const finalTags = await prisma.noticeTag.findMany({
         where: { name: { in: normalized } },
     });
 
     if (finalTags.length === 0) return;
 
-    await prisma.noticeTag.createMany({
+    await prisma.noticeTagOnNotice.createMany({
         data: finalTags.map((tag) => ({ noticeId, tagId: tag.id })),
-        skipDuplicates: true,
     });
 }
 
@@ -202,7 +210,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                 // Wait for list
                 try {
                     await page.waitForSelector('table tbody tr', { timeout: 10000 });
-                } catch (e) {
+                } catch {
                     console.log(`Timeout waiting for table on ${board.name} page ${pageNum} (Method 1). Checking empty state...`);
                     // If no table, maybe empty page or wrong selector? simpler break for now
                     break;
@@ -248,27 +256,67 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                     break;
                 }
 
+                const uniqueLinks = [];
+                const seenUrls = new Set<string>();
+                for (const link of links) {
+                    if (!link) continue;
+
+                    const normalizedUrl = normalizeNoticeUrl(link.url);
+                    if (!normalizedUrl || seenUrls.has(normalizedUrl)) continue;
+
+                    seenUrls.add(normalizedUrl);
+                    uniqueLinks.push({
+                        ...link,
+                        url: normalizedUrl !== link.url ? link.url : normalizedUrl,
+                        normalizedUrl,
+                    });
+                }
+
+                if (uniqueLinks.length === 0) {
+                    console.log(`No unique links found on ${board.name} page ${pageNum}. Stopping board.`);
+                    break;
+                }
+
+                const urlCandidates = new Set<string>();
+                for (const link of uniqueLinks) {
+                    urlCandidates.add(link.normalizedUrl);
+                    if (link.url !== link.normalizedUrl) {
+                        urlCandidates.add(link.url);
+                    }
+                }
+
+                const existingNotices = await prisma.notice.findMany({
+                    where: {
+                        url: { in: Array.from(urlCandidates) },
+                    },
+                    select: {
+                        id: true,
+                        title: true,
+                        date: true,
+                        category: true,
+                        content: true,
+                        deadline: true,
+                        processed: true,
+                        isPinned: true,
+                        url: true,
+                    },
+                });
+                const existingNoticeMap = new Map<string, (typeof existingNotices)[number]>();
+                for (const existingNotice of existingNotices) {
+                    existingNoticeMap.set(existingNotice.url, existingNotice);
+                }
+
                 // Deep Crawl for Content
                 let newItemsOnThisPage = 0;
 
-                for (const link of links) {
+                for (const link of uniqueLinks) {
                     if (!link) continue;
                     if (boardProcessedCount >= MAX_NOTICES_PER_BOARD) {
                         stopBoard = true;
                         break;
                     }
 
-                    // Incremental Check
-                    const normalizedUrl = normalizeNoticeUrl(link.url);
-
-                    const existing = await prisma.notice.findFirst({
-                        where: {
-                            OR: [
-                                { url: link.url },
-                                { url: normalizedUrl }
-                            ]
-                        }
-                    });
+                    const existing = existingNoticeMap.get(link.normalizedUrl) || existingNoticeMap.get(link.url);
 
                     if (existing && existing.processed) {
                         const hasMetadataChanged = existing.title !== link.title || existing.date !== link.date || existing.category !== board.name;
@@ -281,6 +329,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                                         title: link.title,
                                         date: link.date,
                                         category: board.name,
+                                        url: link.normalizedUrl,
                                         isPinned: link.isPinned,
                                     },
                                 });
@@ -293,7 +342,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                             if (existing.isPinned !== link.isPinned) {
                                 await prisma.notice.update({
                                     where: { id: existing.id },
-                                    data: { isPinned: link.isPinned },
+                                    data: { isPinned: link.isPinned, url: link.normalizedUrl },
                                 });
                             }
                             console.log(`Skipping existing: ${link.title}`);
@@ -315,6 +364,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                                         title: link.title,
                                         date: link.date,
                                         category: board.name,
+                                        url: link.normalizedUrl,
                                         content: refreshedBodyContent || existing.content,
                                         deadline: shouldUpdateDeadline ? refreshedDeadline : existing.deadline,
                                         isPinned: link.isPinned,
@@ -336,6 +386,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                                         title: link.title,
                                         date: link.date,
                                         category: board.name,
+                                        url: link.normalizedUrl,
                                         isPinned: link.isPinned,
                                     },
                                 });
@@ -353,6 +404,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                                             title: link.title,
                                             date: link.date,
                                             category: board.name,
+                                            url: link.normalizedUrl,
                                             isPinned: link.isPinned,
                                         },
                                     });
@@ -373,7 +425,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
 
                         const noticeData: NoticeData = {
                             title: link.title,
-                            url: link.url,
+                            url: link.normalizedUrl,
                             category: board.name,
                             date: link.date,
                             body: bodyContent?.slice(0, 10000),
@@ -383,41 +435,32 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
 
                         allNotices.push(noticeData);
 
-                        // Upsert notice
-                        // Use normalized URL for storage to prevent duplicates
-                        const storedNotice = await prisma.notice.upsert({
-                            where: { url: normalizedUrl },
-                            update: {
-                                title: noticeData.title,
-                                date: noticeData.date,
-                                category: noticeData.category,
-                                content: bodyContent,
-                                summary: analysis.summary,
-                                minGrade: noticeData.minGrade,
-                                maxIncome: noticeData.maxIncome,
-                                minGpa: noticeData.minGpa,
-                                scholarshipType: noticeData.scholarshipType,
-                                deadline: noticeData.applicationDeadline,
-                                processed: true,
-                                isPinned: link.isPinned,
-                            },
-                            create: {
-                                title: noticeData.title,
-                                url: normalizedUrl, // Save normalized URL
-                                date: noticeData.date,
-                                category: noticeData.category,
-                                content: bodyContent,
-                                summary: analysis.summary,
-                                minGrade: noticeData.minGrade,
-                                maxIncome: noticeData.maxIncome,
-                                minGpa: noticeData.minGpa,
-                                scholarshipType: noticeData.scholarshipType,
-                                deadline: noticeData.applicationDeadline,
-                                processed: true,
-                                isPinned: link.isPinned,
-                            },
-                            select: { id: true }
-                        });
+                        const upsertData = {
+                            title: noticeData.title,
+                            url: noticeData.url,
+                            date: noticeData.date,
+                            category: noticeData.category,
+                            content: bodyContent,
+                            summary: analysis.summary,
+                            minGrade: noticeData.minGrade,
+                            maxIncome: noticeData.maxIncome,
+                            minGpa: noticeData.minGpa,
+                            scholarshipType: noticeData.scholarshipType,
+                            deadline: noticeData.applicationDeadline,
+                            processed: true,
+                            isPinned: link.isPinned,
+                        };
+
+                        const storedNotice = existing
+                            ? await prisma.notice.update({
+                                where: { id: existing.id },
+                                data: upsertData,
+                                select: { id: true },
+                            })
+                            : await prisma.notice.create({
+                                data: upsertData,
+                                select: { id: true },
+                            });
 
                         await syncNoticeTags(storedNotice.id, noticeData.tags || []);
 
@@ -435,7 +478,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                 // However, Pinned items (usually 3-5) might be existing. Regular items (10+) should be new if we are going back in time.
                 // If ALL items on the page are existing, we should probably stop.
                 // But let's be safe: If we processed 0 items, and we are deep in pages, stop.
-                if (newItemsOnThisPage === 0 && links.length > 0) {
+                if (newItemsOnThisPage === 0 && uniqueLinks.length > 0) {
                     // Check if they were ALL existing. 
                     // Since we `continue` on existing, if we reach here with newItemsOnThisPage=0, it means all were existing (or failed).
                     // So we can probably stop for this board.

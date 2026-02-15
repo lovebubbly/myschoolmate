@@ -38,7 +38,7 @@ export function getAdminAccessMetadata(request: Request) {
 
     const headerToken = headers.get(TOKEN_HEADER)?.trim() || '';
     const queryToken = new URL(request.url).searchParams.get(TOKEN_QUERY)?.trim() || '';
-    const cookieToken = parseCookieValue(headers.get('cookie') ?? '').trim();
+    const cookieToken = parseCookieValue(headers.get('cookie'))?.trim() || '';
 
     const source = headerToken ? 'header' : queryToken ? 'query' : cookieToken ? 'cookie' : 'none';
     const token = headerToken || queryToken || cookieToken;

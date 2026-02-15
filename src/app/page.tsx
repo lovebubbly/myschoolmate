@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, ArrowRight, Calendar, Sparkles, SlidersHorizontal, Map as MapIcon, Settings as SettingsIcon, LayoutGrid, List, BellRing, CheckCheck, Clock3 } from "lucide-react";
@@ -36,7 +36,7 @@ interface Notice {
   deadline?: string | null;
   minGpa?: number | null;
   content?: string | null;
-  tags?: Array<{ id: number; slug: string; name: string }>;
+  tags?: Array<{ id?: number; slug: string; name: string }>;
   isPinned: boolean;
 }
 
@@ -90,6 +90,7 @@ const WIDGET_ORDER_KEY = 'dashboard-widget-order';
 const WIDGET_ENABLED_KEY = 'dashboard-enabled-widgets';
 const NOTICE_SELECTED_TAGS_KEY = 'dashboard-selected-tags-v1';
 const NOTICE_TAG_MODE_KEY = 'dashboard-tag-mode-v1';
+const NOTICE_FETCH_LIMIT = 200;
 const FALLBACK_WIDGET_ORDER = ['inbox', 'cafeteria', 'notices'];
 const FALLBACK_WIDGET_ENABLED = { inbox: true, cafeteria: true, notices: true };
 const VALID_WIDGET_IDS = ['inbox', 'cafeteria', 'notices'];
@@ -142,6 +143,76 @@ function normalizeTagList(value: unknown): string[] {
 
 function normalizeTagMode(value: unknown): 'any' | 'all' {
   return String(value).toLowerCase() === 'all' ? 'all' : 'any';
+}
+
+type NoticeTag = { id?: number; slug: string; name: string };
+type NoticeTagInput = NoticeTag | string | null;
+
+function normalizeTagSlug(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function getNoticeTagLabel(tag: NoticeTag) {
+  const name = (tag.name || '').trim();
+  const slug = (tag.slug || '').trim();
+  return name.length > 0 ? name : slug;
+}
+
+function normalizeNoticeTag(tag: NoticeTagInput): NoticeTag | null {
+  if (!tag) return null;
+
+  if (typeof tag === 'string') {
+    const name = tag.trim();
+    if (!name) return null;
+    return {
+      slug: normalizeTagSlug(name),
+      name,
+    };
+  }
+
+  if (typeof tag !== 'object') return null;
+
+  const name = typeof tag.name === 'string' ? tag.name.trim() : '';
+  const rawSlug = typeof tag.slug === 'string' ? tag.slug.trim() : '';
+  const resolvedName = name || rawSlug;
+  const slug = normalizeTagSlug(rawSlug || (resolvedName ? resolvedName : ''));
+  if (!resolvedName || !slug) return null;
+
+  return {
+    id: typeof tag.id === 'number' && Number.isFinite(tag.id) ? tag.id : undefined,
+    slug,
+    name: resolvedName,
+  };
+}
+
+function normalizeNoticeTags(tags: unknown): NoticeTag[] {
+  if (!Array.isArray(tags)) return [];
+
+  const deduped = new Map<string, NoticeTag>();
+  for (const tag of tags) {
+    const normalized = normalizeNoticeTag(tag as NoticeTagInput);
+    if (!normalized) continue;
+    if (deduped.has(normalized.slug)) continue;
+    deduped.set(normalized.slug, normalized);
+  }
+
+  return Array.from(deduped.values());
+}
+
+function dedupeNoticesById(notices: Notice[]): Notice[] {
+  const seen = new Set<number>();
+  const deduped: Notice[] = [];
+
+  for (const notice of notices) {
+    if (!notice || seen.has(notice.id)) continue;
+    seen.add(notice.id);
+    deduped.push(notice);
+  }
+
+  return deduped;
 }
 
 function toCrawlerStatusText(status: NoticeAutoCrawlerStatus | null) {
@@ -217,15 +288,20 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
   return (
     <motion.div
       data-testid="notice-card"
-      layout="position"
-      initial={{ opacity: 0, y: 28, scale: 0.96, filter: 'blur(2px)' }}
-      animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
-      exit={{ opacity: 0, y: -10, scale: 0.96, filter: 'blur(2px)' }}
+      layout
+      initial={{ opacity: 0, y: 28, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -10, scale: 0.96 }}
       transition={{
         delay: index * 0.05,
         type: 'spring',
         stiffness: 320,
-        damping: 26
+        damping: 26,
+        layout: {
+          type: 'spring',
+          stiffness: 360,
+          damping: 30
+        }
       }}
       whileHover={{
         y: -8,
@@ -312,7 +388,7 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
                   key={`${notice.id}-${tag.slug}`}
                   className="text-[11px] font-semibold text-muted-foreground/90 bg-muted/50 px-2.5 py-1 rounded-lg border border-border/50"
                 >
-                  #{tag.name}
+                  #{getNoticeTagLabel(tag)}
                 </span>
               ))}
               {notice.deadline && (
@@ -368,7 +444,7 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
                     key={`${notice.id}-${tag.slug}-dialog`}
                     className="text-[11px] font-semibold text-muted-foreground/90 bg-muted/50 px-2.5 py-1 rounded-lg border border-border/50"
                   >
-                    #{tag.name}
+                    #{getNoticeTagLabel(tag)}
                   </span>
                 ))}
               </div>
@@ -403,22 +479,22 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
             )}
 
             <div className="text-foreground/80 leading-8 text-[15px] prose dark:prose-invert max-w-none">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkBreaks]}
-                components={{
-                  strong: ({ node, ...props }) => <span className="font-bold text-primary" {...props} />,
-                  p: ({ node, ...props }) => <p className="mb-4 last:mb-0" {...props} />,
-                  ul: ({ node, ...props }) => <ul className="list-disc ml-5 space-y-2 my-4" {...props} />,
-                  li: ({ node, ...props }) => <li {...props} />,
-                  table: ({ node, ...props }) => (
-                    <div className="overflow-x-auto max-w-full my-6 rounded-2xl border border-border shadow-sm bg-card/50">
-                      <table className="w-full divide-y divide-border text-[13px] border-collapse" {...props} />
-                    </div>
-                  ),
-                  thead: ({ node, ...props }) => <thead className="bg-muted/50 border-b border-border" {...props} />,
-                  th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap bg-muted/10 min-w-[120px]" {...props} />,
-                  td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[120px] whitespace-pre-wrap break-words leading-normal align-top text-xs md:text-[13px]" {...props} />,
-                  a: ({ node, ...props }) => {
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm, remarkBreaks]}
+                  components={{
+                    strong: (props) => <span className="font-bold text-primary" {...props} />,
+                    p: (props) => <p className="mb-4 last:mb-0" {...props} />,
+                    ul: (props) => <ul className="list-disc ml-5 space-y-2 my-4" {...props} />,
+                    li: (props) => <li {...props} />,
+                    table: (props) => (
+                      <div className="overflow-x-auto max-w-full my-6 rounded-2xl border border-border shadow-sm bg-card/50">
+                        <table className="w-full divide-y divide-border text-[13px] border-collapse" {...props} />
+                      </div>
+                    ),
+                    thead: (props) => <thead className="bg-muted/50 border-b border-border" {...props} />,
+                    th: (props) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap bg-muted/10 min-w-[120px]" {...props} />,
+                    td: (props) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[120px] whitespace-pre-wrap break-words leading-normal align-top text-xs md:text-[13px]" {...props} />,
+                    a: (props) => {
                     const href = props.href as string | undefined;
                     return (
                       <a
@@ -430,9 +506,9 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
                       />
                     );
                   },
-                  h1: ({ node, ...props }) => <h1 className="text-2xl font-bold mb-4 mt-8 text-foreground" {...props} />,
-                  h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-6 text-foreground border-b border-border pb-2" {...props} />,
-                  h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-2 mt-4 text-foreground" {...props} />,
+                  h1: (props) => <h1 className="text-2xl font-bold mb-4 mt-8 text-foreground" {...props} />,
+                  h2: (props) => <h2 className="text-xl font-bold mb-3 mt-6 text-foreground border-b border-border pb-2" {...props} />,
+                  h3: (props) => <h3 className="text-lg font-bold mb-2 mt-4 text-foreground" {...props} />,
                 }}
               >
                 {notice.content || "본문 내용이 없습니다. 원문을 확인해주세요."}
@@ -568,7 +644,7 @@ export default function Home() {
   const allowDashboardSyncRef = useRef(false);
   const dashboardSyncTimerRef = useRef<number | null>(null);
 
-  const syncDashboardState = async (nextState?: Partial<DashboardState>) => {
+  const syncDashboardState = useCallback(async (nextState?: Partial<DashboardState>) => {
     if (!allowDashboardSyncRef.current) return;
 
     const payload: DashboardState = {
@@ -588,9 +664,9 @@ export default function Home() {
     } catch (error) {
       console.error('Failed to sync dashboard state:', error);
     }
-  };
+  }, [readNoticeIds, widgetOrder, enabledWidgets]);
 
-  const queueDashboardSync = (nextState?: Partial<DashboardState>) => {
+  const queueDashboardSync = useCallback((nextState?: Partial<DashboardState>) => {
     if (!allowDashboardSyncRef.current) return;
 
     if (dashboardSyncTimerRef.current !== null) {
@@ -600,9 +676,9 @@ export default function Home() {
     dashboardSyncTimerRef.current = window.setTimeout(() => {
       void syncDashboardState(nextState);
     }, 500);
-  };
+  }, [syncDashboardState]);
 
-  async function fetchBriefing() {
+  const fetchBriefing = useCallback(async () => {
     setBriefingLoading(true);
     try {
       const res = await fetch('/api/briefing');
@@ -614,9 +690,9 @@ export default function Home() {
       console.error(e);
     }
     setBriefingLoading(false);
-  }
+  }, []);
 
-  async function fetchProfile() {
+  const fetchProfile = useCallback(async () => {
     try {
       const res = await fetch('/api/user/profile', { cache: 'no-store' });
       const data = await res.json();
@@ -662,10 +738,12 @@ export default function Home() {
     } catch (e) {
       console.error(e);
     }
-  }
+  }, [fetchBriefing]);
 
-  async function loadNotices() {
+  const loadNotices = useCallback(async () => {
     const queryParams = new URLSearchParams();
+    queryParams.set('autoCrawl', '0');
+    queryParams.set('limit', String(NOTICE_FETCH_LIMIT));
     selectedTags.forEach((tag) => queryParams.append('tags', tag));
     if (selectedTags.length > 0) {
       queryParams.set('tagMode', tagMode);
@@ -679,7 +757,12 @@ export default function Home() {
         if (data.autoCrawler) {
           setAutoCrawlerStatus(data.autoCrawler);
         }
-        const incomingNotices: Notice[] = data.notices || [];
+        const incomingNotices = dedupeNoticesById(
+          (Array.isArray(data.notices) ? data.notices : []).map((notice: Notice) => ({
+            ...notice,
+            tags: normalizeNoticeTags(notice.tags),
+          }))
+        );
         setNotices(incomingNotices);
 
         // First-run baseline: treat currently loaded notices as read,
@@ -700,13 +783,13 @@ export default function Home() {
     } catch (error) {
       console.error('Failed to load notices:', error);
     }
-  }
+  }, [selectedTags, tagMode, queueDashboardSync]);
 
   useEffect(() => {
     void (async () => {
       await fetchProfile();
     })();
-  }, []);
+  }, [fetchProfile]);
 
   useEffect(() => {
     localStorage.setItem(READ_NOTICE_IDS_KEY, JSON.stringify(readNoticeIds));
@@ -721,8 +804,9 @@ export default function Home() {
   }, [tagMode]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadNotices();
-  }, [selectedTags, tagMode]);
+  }, [loadNotices]);
 
   const saveWidgetOrder = (newOrder: string[]) => {
     const normalized = normalizeWidgetOrder(newOrder);
@@ -1176,11 +1260,11 @@ export default function Home() {
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm, remarkBreaks]}
                           components={{
-                            strong: ({ node, ...props }) => <strong className="font-bold text-primary inline" {...props} />,
-                            p: ({ node, ...props }) => <p className="mb-4 last:mb-0 text-[15px] leading-7 text-foreground/90" {...props} />,
-                            ul: ({ node, ...props }) => <ul className="space-y-2 mb-4 list-disc pl-5" {...props} />,
-                            li: ({ node, ...props }) => <li className="text-[15px] leading-7 text-foreground/90" {...props} />,
-                            a: ({ node, ...props }) => {
+                            strong: (props) => <strong className="font-bold text-primary inline" {...props} />,
+                            p: (props) => <p className="mb-4 last:mb-0 text-[15px] leading-7 text-foreground/90" {...props} />,
+                            ul: (props) => <ul className="space-y-2 mb-4 list-disc pl-5" {...props} />,
+                            li: (props) => <li className="text-[15px] leading-7 text-foreground/90" {...props} />,
+                            a: (props) => {
                               const href = props.href as string | undefined;
                               return (
                                 <a
@@ -1192,9 +1276,9 @@ export default function Home() {
                                 />
                               );
                             },
-                            h1: ({ node, ...props }) => <h3 className="text-xl font-bold text-foreground mb-3 mt-6" {...props} />,
-                            h2: ({ node, ...props }) => <h4 className="text-lg font-bold text-foreground mb-2 mt-4" {...props} />,
-                            h3: ({ node, ...props }) => <h5 className="text-base font-bold text-foreground mb-2 mt-3" {...props} />,
+                            h1: (props) => <h3 className="text-xl font-bold text-foreground mb-3 mt-6" {...props} />,
+                            h2: (props) => <h4 className="text-lg font-bold text-foreground mb-2 mt-4" {...props} />,
+                            h3: (props) => <h5 className="text-base font-bold text-foreground mb-2 mt-3" {...props} />,
                           }}
                         >
                           {briefing || "오늘의 브리핑 데이터가 없습니다."}
@@ -1576,7 +1660,7 @@ export default function Home() {
                                       }
                                       className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${isActive ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted/50 text-muted-foreground border-border hover:text-foreground'}`}
                                     >
-                                      #{tag.name}
+                                      #{getNoticeTagLabel(tag)}
                                     </button>
                                   );
                                   })}

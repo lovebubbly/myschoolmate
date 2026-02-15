@@ -12,15 +12,12 @@ import { CafeteriaWidget } from '@/components/CafeteriaWidget';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { GripVertical, Layout, Eye, EyeOff, ChevronUp, ChevronDown } from 'lucide-react';
 import { Mascot } from '@/components/Mascot';
-import { AIAnalyzingLoader } from '@/components/LottieAnimations';
 
 import {
   Dialog,
   DialogContent,
   DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogClose
+  DialogTitle
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Search, X } from "lucide-react";
@@ -39,6 +36,7 @@ interface Notice {
   deadline?: string | null;
   minGpa?: number | null;
   content?: string | null;
+  tags?: Array<{ id: number; slug: string; name: string }>;
   isPinned: boolean;
 }
 
@@ -90,6 +88,8 @@ const READ_NOTICE_IDS_KEY = 'dashboard-read-notice-ids-v1';
 const NOTICE_BASELINE_KEY = 'dashboard-notice-baseline-v1';
 const WIDGET_ORDER_KEY = 'dashboard-widget-order';
 const WIDGET_ENABLED_KEY = 'dashboard-enabled-widgets';
+const NOTICE_SELECTED_TAGS_KEY = 'dashboard-selected-tags-v1';
+const NOTICE_TAG_MODE_KEY = 'dashboard-tag-mode-v1';
 const FALLBACK_WIDGET_ORDER = ['inbox', 'cafeteria', 'notices'];
 const FALLBACK_WIDGET_ENABLED = { inbox: true, cafeteria: true, notices: true };
 const VALID_WIDGET_IDS = ['inbox', 'cafeteria', 'notices'];
@@ -126,6 +126,22 @@ function normalizeEnabledWidgets(value: unknown) {
     cafeteria: typeof (value as { cafeteria?: unknown }).cafeteria === 'boolean' ? Boolean((value as { cafeteria?: unknown }).cafeteria) : FALLBACK_WIDGET_ENABLED.cafeteria,
     notices: typeof (value as { notices?: unknown }).notices === 'boolean' ? Boolean((value as { notices?: unknown }).notices) : FALLBACK_WIDGET_ENABLED.notices,
   };
+}
+
+function normalizeTagList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) => String(item).trim())
+        .filter((item) => item.length > 0)
+    )
+  );
+}
+
+function normalizeTagMode(value: unknown): 'any' | 'all' {
+  return String(value).toLowerCase() === 'all' ? 'all' : 'any';
 }
 
 function toCrawlerStatusText(status: NoticeAutoCrawlerStatus | null) {
@@ -201,19 +217,30 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
   return (
     <motion.div
       data-testid="notice-card"
-      layout
-      initial={{ opacity: 0, y: 30, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -8, scale: 0.95 }}
+      layout="position"
+      initial={{ opacity: 0, y: 28, scale: 0.96, filter: 'blur(2px)' }}
+      animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
+      exit={{ opacity: 0, y: -10, scale: 0.96, filter: 'blur(2px)' }}
       transition={{
-        duration: 0.35,
         delay: index * 0.05,
-        ease: [0.22, 1, 0.36, 1]
+        type: 'spring',
+        stiffness: 320,
+        damping: 26
       }}
       whileHover={{
-        y: -4,
-        transition: { duration: 0.2 }
+        y: -8,
+        scale: 1.025,
+        transition: { type: 'spring', stiffness: 320, damping: 24 }
       }}
+      whileFocus={{
+        y: -8,
+        scale: 1.025,
+        transition: { type: 'spring', stiffness: 320, damping: 24 }
+      }}
+      whileTap={{
+        scale: 0.985
+      }}
+      layoutId={`notice-card-${notice.id}`}
       className="h-full"
     >
       <button
@@ -223,7 +250,7 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
         className="w-full h-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 rounded-[24px]"
       >
       <Card
-        className="group relative overflow-hidden bg-card hover:bg-muted/30 border-border/60 hover:border-primary/30 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 rounded-[24px] cursor-pointer h-full min-h-[220px]"
+        className="group relative overflow-hidden bg-card hover:bg-muted/30 border-border/60 hover:border-primary/30 shadow-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-300 rounded-[24px] cursor-pointer h-full min-h-[220px] will-change-transform"
       >
           <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
 
@@ -280,6 +307,14 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
 
             {/* Bottom Tags - Unified Minimal Style */}
             <div className="mt-auto pt-3 flex flex-wrap gap-2">
+              {(notice.tags || []).map((tag) => (
+                <span
+                  key={`${notice.id}-${tag.slug}`}
+                  className="text-[11px] font-semibold text-muted-foreground/90 bg-muted/50 px-2.5 py-1 rounded-lg border border-border/50"
+                >
+                  #{tag.name}
+                </span>
+              ))}
               {notice.deadline && (
                 <span className="flex items-center gap-1.5 text-[11px] font-medium text-rose-600 dark:text-rose-400 bg-rose-500/[0.05] px-2.5 py-1 rounded-lg border border-rose-200/50 dark:border-rose-900/30">
                   <Calendar className="w-3 h-3 opacity-70" />
@@ -305,7 +340,6 @@ function NoticeCard({ notice, filterProfile, onOpen, index = 0 }: { notice: Noti
           </div>
         </Card>
       </button>
-      </Card>
     </motion.div>
   );
 }
@@ -327,8 +361,27 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
             <DialogTitle className="text-xl font-extrabold leading-tight text-foreground">
               {notice.title}
             </DialogTitle>
+            {notice.tags && notice.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {notice.tags.map((tag) => (
+                  <span
+                    key={`${notice.id}-${tag.slug}-dialog`}
+                    className="text-[11px] font-semibold text-muted-foreground/90 bg-muted/50 px-2.5 py-1 rounded-lg border border-border/50"
+                  >
+                    #{tag.name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full hover:bg-muted -mt-1 -mr-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="rounded-full hover:bg-muted -mt-1 -mr-1"
+            aria-label="공지 상세 닫기"
+          >
             <X className="w-5 h-5" />
           </Button>
         </div>
@@ -365,7 +418,18 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
                   thead: ({ node, ...props }) => <thead className="bg-muted/50 border-b border-border" {...props} />,
                   th: ({ node, ...props }) => <th className="px-4 py-3 text-left font-bold text-foreground border-r border-border/50 last:border-r-0 whitespace-nowrap bg-muted/10 min-w-[120px]" {...props} />,
                   td: ({ node, ...props }) => <td className="px-4 py-3 border-t border-border text-muted-foreground border-r border-border/50 last:border-r-0 min-w-[120px] whitespace-pre-wrap break-words leading-normal align-top text-xs md:text-[13px]" {...props} />,
-                  a: ({ node, ...props }) => <a className="text-primary font-bold hover:underline underline-offset-4 break-all" {...props} target="_blank" />,
+                  a: ({ node, ...props }) => {
+                    const href = props.href as string | undefined;
+                    return (
+                      <a
+                        className="text-primary font-bold hover:underline underline-offset-4 break-all"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={href ? `외부 링크: ${href}` : '새 탭에서 열기'}
+                        {...props}
+                      />
+                    );
+                  },
                   h1: ({ node, ...props }) => <h1 className="text-2xl font-bold mb-4 mt-8 text-foreground" {...props} />,
                   h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-6 text-foreground border-b border-border pb-2" {...props} />,
                   h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-2 mt-4 text-foreground" {...props} />,
@@ -376,10 +440,27 @@ function NoticeDialog({ notice, isOpen, onClose }: { notice: Notice | null, isOp
             </div>
 
             <div className="grid grid-cols-2 gap-4 mt-8 pb-4">
-              <Button variant="outline" className="h-12 rounded-xl font-bold" onClick={() => window.open(notice.url, '_blank')}>
-                원문 보러가기 <ArrowRight className="w-4 h-4 ml-2" />
+              <Button
+                type="button"
+                asChild
+                variant="outline"
+                className="h-12 rounded-xl font-bold"
+              >
+                <a
+                  href={notice.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`공지 원문 새 탭 열기: ${notice.title}`}
+                >
+                  원문 보러가기 <ArrowRight className="w-4 h-4 ml-2" />
+                </a>
               </Button>
-              <Button className="h-12 rounded-xl font-bold bg-primary text-primary-foreground" onClick={onClose}>
+              <Button
+                type="button"
+                className="h-12 rounded-xl font-bold bg-primary text-primary-foreground"
+                onClick={onClose}
+                aria-label="공지 상세 닫기"
+              >
                 닫기
               </Button>
             </div>
@@ -418,6 +499,21 @@ export default function Home() {
 
   const [showFilters, setShowFilters] = useState(false);
   const [filterProfile, setFilterProfile] = useState<FilterProfile>({ grade: 0, income: 11, gpa: 0 }); // Default income 11 (All)
+  const [selectedTags, setSelectedTags] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const saved = localStorage.getItem(NOTICE_SELECTED_TAGS_KEY);
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return normalizeTagList(parsed);
+    } catch {
+      return [];
+    }
+  });
+  const [tagMode, setTagMode] = useState<'any' | 'all'>(() => {
+    if (typeof window === 'undefined') return 'any';
+    return normalizeTagMode(localStorage.getItem(NOTICE_TAG_MODE_KEY));
+  });
   const [loadedProfile, setLoadedProfile] = useState<LoadedProfile | null>(null);
 
   const [isPinnedExpanded, setIsPinnedExpanded] = useState(false);
@@ -470,7 +566,7 @@ export default function Home() {
   });
   const [isStyleDialogOpen, setIsStyleDialogOpen] = useState(false);
   const allowDashboardSyncRef = useRef(false);
-  const dashboardSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dashboardSyncTimerRef = useRef<number | null>(null);
 
   const syncDashboardState = async (nextState?: Partial<DashboardState>) => {
     if (!allowDashboardSyncRef.current) return;
@@ -569,8 +665,15 @@ export default function Home() {
   }
 
   async function loadNotices() {
+    const queryParams = new URLSearchParams();
+    selectedTags.forEach((tag) => queryParams.append('tags', tag));
+    if (selectedTags.length > 0) {
+      queryParams.set('tagMode', tagMode);
+    }
+
+    const url = `/api/notices${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     try {
-      const res = await fetch('/api/notices');
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         if (data.autoCrawler) {
@@ -581,7 +684,11 @@ export default function Home() {
 
         // First-run baseline: treat currently loaded notices as read,
         // so inbox only highlights newly arrived notices afterward.
-        if (incomingNotices.length > 0 && localStorage.getItem(NOTICE_BASELINE_KEY) !== '1') {
+        if (
+          incomingNotices.length > 0 &&
+          selectedTags.length === 0 &&
+          localStorage.getItem(NOTICE_BASELINE_KEY) !== '1'
+        ) {
           setReadNoticeIds((prev) => {
             const next = Array.from(new Set([...prev, ...incomingNotices.map((notice) => notice.id)]));
             queueDashboardSync({ readNoticeIds: next });
@@ -598,13 +705,24 @@ export default function Home() {
   useEffect(() => {
     void (async () => {
       await fetchProfile();
-      await loadNotices();
     })();
   }, []);
 
   useEffect(() => {
     localStorage.setItem(READ_NOTICE_IDS_KEY, JSON.stringify(readNoticeIds));
   }, [readNoticeIds]);
+
+  useEffect(() => {
+    localStorage.setItem(NOTICE_SELECTED_TAGS_KEY, JSON.stringify(selectedTags));
+  }, [selectedTags]);
+
+  useEffect(() => {
+    localStorage.setItem(NOTICE_TAG_MODE_KEY, tagMode);
+  }, [tagMode]);
+
+  useEffect(() => {
+    void loadNotices();
+  }, [selectedTags, tagMode]);
 
   const saveWidgetOrder = (newOrder: string[]) => {
     const normalized = normalizeWidgetOrder(newOrder);
@@ -635,7 +753,7 @@ export default function Home() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisibleCount(ITEMS_PER_PAGE);
-  }, [selectedCategory, searchQuery, filterProfile]);
+  }, [selectedCategory, searchQuery, filterProfile, selectedTags, tagMode]);
 
   async function refreshNotices() {
     setLoading(true);
@@ -646,7 +764,7 @@ export default function Home() {
         if (data.autoCrawler) {
           setAutoCrawlerStatus(data.autoCrawler);
         }
-        setNotices(data.notices || []);
+        await loadNotices();
         fetchBriefing();
       }
     } catch (error) {
@@ -667,7 +785,7 @@ export default function Home() {
   };
 
   // Filter & Search Logic
-  const filteredNotices = notices
+  const filteredNotices = [...notices]
     .sort((a, b) => (a.date < b.date ? 1 : -1))
     .filter(n => {
       // 1. Search Query
@@ -729,6 +847,20 @@ export default function Home() {
   const regularNotices = filteredNotices.filter(n => !n.isPinned);
   const noticeLookup = useMemo(() => new Map(notices.map((notice) => [notice.id, notice])), [notices]);
   const readNoticeSet = useMemo(() => new Set(readNoticeIds), [readNoticeIds]);
+  const availableTags = useMemo(() => {
+    const tagMap = new Map<string, { slug: string; name: string }>();
+    for (const notice of notices) {
+      for (const tag of notice.tags || []) {
+        if (!tag || !tag.slug) continue;
+        tagMap.set(tag.slug, { slug: tag.slug, name: tag.name || tag.slug });
+      }
+    }
+    return Array.from(tagMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'ko-KR'));
+  }, [notices]);
+
+  const availableTagNameBySlug = useMemo(() => {
+    return new Map(availableTags.map((tag) => [tag.slug, tag.name] as const));
+  }, [availableTags]);
   const unreadNoticeCount = notices.filter((notice) => !readNoticeSet.has(notice.id)).length;
 
   const inboxItems = useMemo(() => {
@@ -776,8 +908,8 @@ export default function Home() {
   const autoCrawlerStatusText = toCrawlerStatusText(autoCrawlerStatus);
 
   return (
-    <div className="min-h-screen font-sans bg-[url('/background.png')] bg-cover bg-center bg-fixed text-foreground">
-      <div className="min-h-screen bg-background/60 backdrop-blur-[20px] p-4 md:p-8 transition-colors duration-500" style={{ paddingTop: '120px' }}>
+    <div className="min-h-screen font-sans bg-[url('/background.png')] bg-cover bg-center md:bg-fixed text-foreground">
+      <div className="min-h-screen bg-background/60 backdrop-blur-[20px] p-4 md:p-8 pt-20 md:pt-28 transition-colors duration-500">
         <main className="max-w-4xl mx-auto space-y-8 pb-12">
 
           {/* Header */}
@@ -809,11 +941,25 @@ export default function Home() {
                 >
                   <Layout className="w-5 h-5" />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => window.location.href = '/planning'} className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform">
-                  <MapIcon className="w-5 h-5" />
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform"
+                >
+                  <Link href="/planning" aria-label="커리큘럼 페이지로 이동">
+                    <MapIcon className="w-5 h-5" />
+                  </Link>
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => window.location.href = '/settings'} className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform">
-                  <SettingsIcon className="w-5 h-5" />
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full hover:bg-muted shadow-sm text-muted-foreground hover:scale-105 transition-transform"
+                >
+                  <Link href="/settings" aria-label="설정 페이지로 이동">
+                    <SettingsIcon className="w-5 h-5" />
+                  </Link>
                 </Button>
               </div>
             </div>
@@ -1034,7 +1180,18 @@ export default function Home() {
                             p: ({ node, ...props }) => <p className="mb-4 last:mb-0 text-[15px] leading-7 text-foreground/90" {...props} />,
                             ul: ({ node, ...props }) => <ul className="space-y-2 mb-4 list-disc pl-5" {...props} />,
                             li: ({ node, ...props }) => <li className="text-[15px] leading-7 text-foreground/90" {...props} />,
-                            a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 font-bold hover:underline underline-offset-4 inline" {...props} target="_blank" rel="noopener noreferrer" />,
+                            a: ({ node, ...props }) => {
+                              const href = props.href as string | undefined;
+                              return (
+                                <a
+                                  className="text-blue-600 dark:text-blue-400 font-bold hover:underline underline-offset-4 inline"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  aria-label={href ? `외부 링크: ${href}` : '새 탭에서 열기'}
+                                  {...props}
+                                />
+                              );
+                            },
                             h1: ({ node, ...props }) => <h3 className="text-xl font-bold text-foreground mb-3 mt-6" {...props} />,
                             h2: ({ node, ...props }) => <h4 className="text-lg font-bold text-foreground mb-2 mt-4" {...props} />,
                             h3: ({ node, ...props }) => <h5 className="text-base font-bold text-foreground mb-2 mt-3" {...props} />,
@@ -1355,14 +1512,85 @@ export default function Home() {
                               />
                             </div>
                           </div>
+
+                          {selectedTags.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-semibold text-muted-foreground">선택된 태그</label>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTags([])}
+                                  className="text-xs text-muted-foreground hover:text-foreground"
+                                >
+                                  태그 초기화
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {selectedTags.map((tag) => (
+                                  <button
+                                    key={`selected-tag-${tag}`}
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedTags((prev) => prev.filter((item) => item !== tag))
+                                    }
+                                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-primary/15 text-primary border border-primary/25 hover:bg-primary/25"
+                                    aria-label={`선택된 태그 ${availableTagNameBySlug.get(tag) || tag} 제거`}
+                                  >
+                                    #{availableTagNameBySlug.get(tag) || tag}
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <span>모드:</span>
+                                <select
+                                  className="bg-muted/50 rounded-full px-3 py-1 border border-border text-xs font-semibold"
+                                  value={tagMode}
+                                  onChange={(e) => setTagMode(e.target.value as 'any' | 'all')}
+                                >
+                                  <option value="any">하나라도 포함</option>
+                                  <option value="all">모두 포함</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
+
+                          {availableTags.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-semibold text-muted-foreground">태그 필터</label>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {availableTags.map((tag) => {
+                                  const isActive = selectedTags.includes(tag.slug);
+                                  return (
+                                    <button
+                                      key={`tag-filter-${tag.slug}`}
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedTags((prev) =>
+                                          prev.includes(tag.slug)
+                                            ? prev.filter((item) => item !== tag.slug)
+                                            : [...prev, tag.slug]
+                                        )
+                                      }
+                                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${isActive ? 'bg-primary text-primary-foreground border-primary' : 'bg-muted/50 text-muted-foreground border-border hover:text-foreground'}`}
+                                    >
+                                      #{tag.name}
+                                    </button>
+                                  );
+                                  })}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
                       <AnimatePresence mode='popLayout'>
                         {pinnedNotices.length > 0 && isPinnedExpanded && (
-                        <motion.div
-                          data-testid="pinned-notices-expanded"
-                          key="pinned-notices"
+                          <motion.div
+                            data-testid="pinned-notices-expanded"
+                            key="pinned-notices"
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
@@ -1375,7 +1603,7 @@ export default function Home() {
                                   <div className="absolute top-3 right-3 z-10">
                                     <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[9px] font-bold border border-primary/20 backdrop-blur-sm">고정</span>
                                   </div>
-                                  <NoticeCard key={`${notice.id}-${layout}`} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i} />
+                                  <NoticeCard key={notice.id} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i} />
                                 </div>
                               ))}
                             </div>
@@ -1384,21 +1612,24 @@ export default function Home() {
                         )}
                       </AnimatePresence>
 
-                      <AnimatePresence mode='wait' initial={false}>
-                    <motion.div
-                          data-testid={`regular-notices-${layout}`}
-                          key={`regular-notices-${layout}`}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -8 }}
-                          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                          className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}
-                        >
+                      <motion.div
+                        layout
+                        transition={{ layout: { type: 'spring', stiffness: 300, damping: 28 } }}
+                        data-testid={`regular-notices-${layout}`}
+                        className={layout === 'grid' ? "grid gap-4 md:grid-cols-2" : "flex flex-col gap-3"}
+                      >
+                        <AnimatePresence mode="popLayout" initial={false}>
                           {regularNotices.slice(0, visibleCount).map((notice, i) => (
-                            <NoticeCard key={`${notice.id}-${layout}`} notice={notice} filterProfile={filterProfile} onOpen={handleOpenNotice} index={i % 12} />
+                              <NoticeCard
+                              key={notice.id}
+                              notice={notice}
+                              filterProfile={filterProfile}
+                              onOpen={handleOpenNotice}
+                              index={i % 12}
+                            />
                           ))}
-                        </motion.div>
-                      </AnimatePresence>
+                        </AnimatePresence>
+                      </motion.div>
 
                       {/* Load More Button */}
                       {visibleCount < regularNotices.length && (

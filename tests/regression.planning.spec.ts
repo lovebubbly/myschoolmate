@@ -9,7 +9,69 @@ type TrackApiCourse = {
 type TrackApiItem = {
   id: number;
   name: string;
+  key?: string;
   courses: TrackApiCourse[];
+};
+
+const TRACK_RULE_DEFAULTS: Record<
+  string,
+  Partial<{
+    MAJOR_MANDATORY: number;
+    MAJOR_ELECTIVE: number;
+    GENERAL: number;
+    CROSS: number;
+  }>
+> = {
+  info_net: { MAJOR_MANDATORY: 15, MAJOR_ELECTIVE: 9 },
+  bigdata_ai: { MAJOR_MANDATORY: 3, MAJOR_ELECTIVE: 21 },
+  semi_sys: { MAJOR_MANDATORY: 12, MAJOR_ELECTIVE: 9 },
+};
+
+const PLANNING_YEAR_MIN = 2016;
+const PLANNING_YEAR_MAX = 2025;
+
+const EXPECTED_ACADEMIC_YEARS = Array.from(
+  { length: PLANNING_YEAR_MAX - PLANNING_YEAR_MIN + 1 },
+  (_, index) => PLANNING_YEAR_MIN + index,
+);
+
+type RequirementResponse = {
+  success: boolean;
+  track: {
+    requiredCourseCount: number;
+    requiredCoursesSatisfied?: boolean;
+    categoryRequirementsSatisfied?: boolean;
+    overallSatisfied?: boolean;
+    missingRequiredCourseNamesCount?: number;
+    categoryChecks?: Array<{
+      categoryCode?: string;
+      categoryName?: string;
+      requiredCredits: number;
+      completedCredits: number;
+      requiredCourseCount: number;
+      completedCourseCount: number;
+      required: boolean;
+      satisfied: boolean;
+      missingCredits: number;
+    }>;
+    requiredCourseCountByCategory?: Array<{
+      categoryCode?: string;
+      requiredCourseCount: number;
+      completedCourseCount: number;
+      completionRate: number;
+      requiredCredits: number;
+      completedCredits: number;
+    }>;
+    categorySummaries: Array<{
+      categoryCode: string;
+      requiredCourseCount: number;
+      completedCourseCount: number;
+      completionRate: number;
+      requiredCredits: number;
+      completedCredits: number;
+    }>;
+  };
+  completionByTrack: Record<string, string[]>;
 };
 
 async function selectActiveTrackAndResetProgress(request: APIRequestContext, baseUrl: string): Promise<TrackApiItem> {
@@ -116,7 +178,7 @@ test.describe('Planning Progress', () => {
 
     await page.reload();
     const checked = page.getByRole('checkbox').first();
-    await expect(checked).toHaveAttribute('data-state', 'checked');
+    await expect.poll(async () => checked.getAttribute('data-state')).toBe('checked');
 
     await page.getByRole('button', { name: '체크 초기화' }).click();
     await expect.poll(async () => {
@@ -153,5 +215,99 @@ test.describe('Planning Progress', () => {
       const state = await checkbox.getAttribute('data-state');
       return state === 'checked';
     }).toBeTruthy();
+  });
+
+  test('planning requirements should support curriculum version coverage and category summaries', async ({ request }) => {
+    const targetTrack = await selectActiveTrackAndResetProgress(request, BASE_URL);
+    if (!targetTrack.courses || targetTrack.courses.length === 0) {
+      test.skip(true, 'No courses available on selected planning track.');
+      return;
+    }
+    const expectedCategoryRules = targetTrack.key ? TRACK_RULE_DEFAULTS[targetTrack.key] : null;
+    if (!expectedCategoryRules || Object.keys(expectedCategoryRules).length === 0) {
+      test.skip(true, `No category rule fixture for track key "${targetTrack.key ?? 'unknown'}".`);
+      return;
+    }
+
+    const curriculumRes = await request.get(`${BASE_URL}/api/curriculum`);
+    expect(curriculumRes.ok()).toBeTruthy();
+    const curriculumJson = await curriculumRes.json();
+    expect(curriculumJson.success).toBeTruthy();
+
+    const availableYears = Array.isArray(curriculumJson.availableYears) ? curriculumJson.availableYears : [];
+    const sortedYears = [...availableYears].sort((a, b) => a - b);
+    expect(sortedYears).toEqual(EXPECTED_ACADEMIC_YEARS);
+
+    const baselineYear = sortedYears[0];
+    const latestYear = sortedYears[sortedYears.length - 1];
+    expect(baselineYear).toBeLessThanOrEqual(latestYear);
+    expect(latestYear).toBe(2025);
+
+    const requirementsByYear = await Promise.all(
+      sortedYears.map(async (academicYear) => {
+        const requirementsRes = await request.get(
+          `${BASE_URL}/api/planning/requirements?trackId=${targetTrack.id}&academicYear=${academicYear}`,
+        );
+        expect(requirementsRes.ok()).toBeTruthy();
+        const json = (await requirementsRes.json()) as RequirementResponse;
+        expect(json.success).toBeTruthy();
+        expect(json.academicYear).toBe(academicYear);
+        expect(Array.isArray(json.track.categorySummaries)).toBeTruthy();
+        expect(json.track.requiredCourseCount).toBeGreaterThan(0);
+        expect(typeof json.track.requirementStatus?.missingRequiredCourseNamesCount).toBe('number');
+        expect(json.track.requirementStatus?.missingRequiredCourseNamesCount).toBe(
+          json.track.missingRequiredCourseNames.length,
+        );
+        return json;
+      }),
+    );
+
+    const latestJson = requirementsByYear[requirementsByYear.length - 1];
+    const baselineJson = requirementsByYear[0];
+    expect(baselineJson).toBeTruthy();
+
+    expect(latestJson.track.requirementStatus).toBeTruthy();
+    expect(typeof latestJson.track.requirementStatus?.requiredCoursesSatisfied).toBe('boolean');
+    expect(typeof latestJson.track.requirementStatus?.categoryRequirementsSatisfied).toBe('boolean');
+    expect(typeof latestJson.track.requirementStatus?.overallSatisfied).toBe('boolean');
+    expect(Array.isArray(latestJson.track.requirementStatus?.categoryChecks)).toBeTruthy();
+    expect(
+      latestJson.track.requirementStatus?.categoryChecks?.every((check) => typeof check.satisfied === 'boolean'),
+    ).toBeTruthy();
+
+    const anyCreditCategory = latestJson.track.categorySummaries.some((summary) => summary.requiredCredits > 0);
+    expect(anyCreditCategory).toBeTruthy();
+
+    const categoryChecks = latestJson.track.requirementStatus?.categoryChecks ?? [];
+    for (const [categoryCode, expectedCredits] of Object.entries(expectedCategoryRules)) {
+      const matched = categoryChecks.find((check) => check.categoryCode === categoryCode);
+      expect(matched).toBeTruthy();
+      expect(matched?.requiredCredits).toBe(expectedCredits);
+    }
+
+    const sampleCourseId = targetTrack.courses[0].id;
+    const saveRes = await request.post(`${BASE_URL}/api/planning/progress`, {
+      data: {
+        trackId: targetTrack.id,
+        completedCourseIds: [sampleCourseId],
+      },
+    });
+    expect(saveRes.ok()).toBeTruthy();
+
+    const refreshedRes = await request.get(
+      `${BASE_URL}/api/planning/requirements?trackId=${targetTrack.id}&academicYear=${latestYear}`,
+    );
+    expect(refreshedRes.ok()).toBeTruthy();
+    const refreshedJson = (await refreshedRes.json()) as RequirementResponse;
+    expect(refreshedJson.success).toBeTruthy();
+    const trackKey = String(targetTrack.id);
+    const completionByTrack = refreshedJson.completionByTrack || {};
+    const completedIds = completionByTrack[trackKey] || [];
+    expect(completedIds).toContain(sampleCourseId);
+
+    const categoryTotalRates = refreshedJson.track.categorySummaries
+      .map((summary) => summary.completionRate)
+      .filter((rate) => Number.isFinite(rate));
+    expect(categoryTotalRates.length).toBeGreaterThan(0);
   });
 });

@@ -4,6 +4,12 @@ type JsonObject = Record<string, unknown>;
 
 export type GradeCategory = 'MAJOR_MANDATORY' | 'MAJOR_ELECTIVE' | 'GENERAL' | 'CROSS' | 'OTHER';
 
+type PlanBuildOptions = {
+    trackIdByKey?: TrackIdByKey;
+};
+
+export type TrackIdByKey = Record<string, number>;
+
 export type PlanningCourse = {
     id: string;
     code: string;
@@ -39,6 +45,28 @@ export type CategorySummary = {
     completionRate: number;
 };
 
+export type CategoryRequirementCheck = {
+    categoryCode: GradeCategory;
+    categoryName: string;
+    requiredCredits: number;
+    completedCredits: number;
+    requiredCourseCount: number;
+    completedCourseCount: number;
+    required: boolean;
+    satisfied: boolean;
+    missingCredits: number;
+};
+
+export type TrackRequirementStatus = {
+    requiredCoursesSatisfied: boolean;
+    categoryRequirementsSatisfied: boolean;
+    overallSatisfied: boolean;
+    requiredCourseCount: number;
+    completedCourseCount: number;
+    missingRequiredCourseNamesCount: number;
+    categoryChecks: CategoryRequirementCheck[];
+};
+
 export type TrackRequirementSummary = {
     trackId: number;
     trackKey: string;
@@ -50,6 +78,7 @@ export type TrackRequirementSummary = {
     requiredCourseIds: string[];
     completionByCourseIds: string[];
     categorySummaries: CategorySummary[];
+    requirementStatus: TrackRequirementStatus;
 };
 
 export type PlanningRequirementPayload = {
@@ -58,6 +87,17 @@ export type PlanningRequirementPayload = {
     availableYears: number[];
     track: TrackRequirementSummary;
     courses: PlanningCourse[];
+};
+
+export type CurriculumCatalogSnapshot = {
+    tracks: Record<string, { name: string; required: string[] }>;
+    versions: Array<{
+        academicYear: number;
+        label: string;
+        source: string;
+        isActive: boolean;
+        trackRequirements: Record<string, { requiredCourses: string[]; categoryRequirements: Partial<Record<GradeCategory, number>> }>;
+    }>;
 };
 
 type YearTrackRequirement = {
@@ -180,6 +220,98 @@ function normalizeCategoryKey(raw: string): GradeCategory | null {
     return null;
 }
 
+function getCatalogSourceYears(root: JsonObject): string[] {
+    const rawYears = new Set<string>();
+
+    const versions = isRecord(root.curriculumVersions) ? (root.curriculumVersions as JsonObject) : null;
+    if (versions) {
+        Object.values(versions).forEach((versionRaw) => {
+            if (!isRecord(versionRaw)) return;
+            const sourceYear = toInt(versionRaw.sourceYear);
+            if (sourceYear !== null) {
+                rawYears.add(String(sourceYear));
+            }
+        });
+    }
+
+    const numericTopLevelYears = Object.keys(root)
+        .filter((year) => /^\d{4}$/.test(year))
+        .map((year) => toInt(year))
+        .filter((year): year is number => year !== null && year >= TRACKS_RANGE.min && year <= TRACKS_RANGE.max)
+        .map((year) => String(year));
+
+    numericTopLevelYears.forEach((year) => rawYears.add(year));
+
+    const sorted = Array.from(rawYears)
+        .map((year) => Number(year))
+        .filter((year): year is number => Number.isFinite(year))
+        .sort((a, b) => a - b)
+        .map((year) => String(year));
+
+    return sorted;
+}
+
+function getTrackIdByKey(trackIdByKey?: TrackIdByKey): TrackIdByKey {
+    if (!trackIdByKey) return {};
+    return trackIdByKey;
+}
+
+function parseTrackCategoryDefaults(root: JsonObject): Record<string, Partial<Record<GradeCategory, number>>> {
+    const rulesRaw = isRecord(root.trackRules) ? (root.trackRules as JsonObject) : null;
+    if (!rulesRaw) {
+        return {};
+    }
+
+    const result: Record<string, Partial<Record<GradeCategory, number>>> = {};
+
+    Object.entries(rulesRaw).forEach(([trackKey, ruleRaw]) => {
+        if (!isRecord(ruleRaw)) return;
+        const categoryRequirements = normalizeCategoryRequirements(ruleRaw.categoryRequirements);
+        if (Object.keys(categoryRequirements).length > 0) {
+            result[trackKey] = categoryRequirements;
+        }
+    });
+
+    return result;
+}
+
+function resolveTrackKeyById(
+    trackId: number,
+    trackKeys: string[],
+    trackIdByKey?: TrackIdByKey,
+): string | null {
+    const map = getTrackIdByKey(trackIdByKey);
+    const directHit = Object.entries(map).find(([, mappedTrackId]) => mappedTrackId === trackId)?.[0];
+    if (directHit) return directHit;
+
+    if (!Number.isInteger(trackId) || trackId <= 0) return null;
+    const targetTrackIndex = trackId - 1;
+    return trackKeys[targetTrackIndex] ?? null;
+}
+
+function resolveCatalogYear(root: JsonObject, requestedSourceYear: string, availableYears: string[]): string {
+    const requestedNumber = toInt(requestedSourceYear);
+    if (!requestedNumber) return getCatalogSourceYears(root).slice(-1)[0] ?? TRACKS_RANGE.max.toString();
+
+    const numericYears = availableYears
+        .map((year) => toInt(year))
+        .filter((year): year is number => year !== null)
+        .sort((a, b) => a - b);
+
+    if (numericYears.length === 0) {
+        return String(requestedNumber);
+    }
+
+    const exact = numericYears.find((year) => year === requestedNumber);
+    if (exact !== undefined) return String(exact);
+
+    const bounded = Math.max(numericYears[0], Math.min(numericYears.at(-1) ?? requestedNumber, requestedNumber));
+    const lower = [...numericYears].filter((year) => year <= bounded).at(-1);
+    if (lower !== undefined) return String(lower);
+
+    return String(numericYears[0]);
+}
+
 function parseLegacyTracks(root: JsonObject): Record<string, { name: string; required: string[] }> {
     const tracksRaw = isRecord(root.tracks) ? (root.tracks as JsonObject) : {};
     const tracks: Record<string, { name: string; required: string[] }> = {};
@@ -197,6 +329,7 @@ function parseLegacyTracks(root: JsonObject): Record<string, { name: string; req
 
 function parseVersions(root: JsonObject): ParsedVersion[] {
     const legacyTracks = parseLegacyTracks(root);
+    const trackRuleDefaults = parseTrackCategoryDefaults(root);
     const versionsRaw = isRecord(root.curriculumVersions) ? (root.curriculumVersions as JsonObject) : null;
     if (!versionsRaw) {
         const numericYears = Object.keys(root)
@@ -210,7 +343,10 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
             sourceYear: `${year}`,
             isActive: year === TRACKS_RANGE.max,
             trackRequirements: Object.entries(legacyTracks).reduce<Record<string, YearTrackRequirement>>((acc, [trackKey, track]) => {
-                acc[trackKey] = { requiredCourses: track.required, categoryRequirements: {} };
+                acc[trackKey] = {
+                    requiredCourses: track.required,
+                    categoryRequirements: trackRuleDefaults[trackKey] ?? {},
+                };
                 return acc;
             }, {}),
         }));
@@ -233,19 +369,12 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
                 ? asStringArray(trackRaw.requiredCourses)
                 : asStringArray(trackRaw.requiredCourseNames);
             const fallback = required.length > 0 ? required : asStringArray(legacyTracks[trackKey]?.required);
-            const categoryRequirements: Partial<Record<GradeCategory, number>> = {};
-            if (isRecord(trackRaw.categoryRequirements)) {
-                Object.entries(trackRaw.categoryRequirements as JsonObject).forEach(([key, value]) => {
-                    const normalized = normalizeCategoryKey(key);
-                    const parsed = toInt(value);
-                    if (normalized && parsed !== null && parsed >= 0) {
-                        categoryRequirements[normalized] = parsed;
-                    }
-                });
-            }
+            const categoryDefaults = trackRuleDefaults[trackKey] ?? {};
+            const explicitRequirements = normalizeCategoryRequirements(trackRaw.categoryRequirements);
+            const mergedRequirements = { ...categoryDefaults, ...explicitRequirements };
             normalizedTrackRequirements[trackKey] = {
                 requiredCourses: fallback,
-                categoryRequirements,
+                categoryRequirements: mergedRequirements,
             };
         });
 
@@ -253,7 +382,7 @@ function parseVersions(root: JsonObject): ParsedVersion[] {
             if (!normalizedTrackRequirements[trackKey]) {
                 normalizedTrackRequirements[trackKey] = {
                     requiredCourses: track.required,
-                    categoryRequirements: {},
+                    categoryRequirements: trackRuleDefaults[trackKey] ?? {},
                 };
             }
         });
@@ -334,22 +463,25 @@ function mapRequiredCourses(requiredCourseNames: string[], allCourses: PlanningC
 
     uniqueRequiredCourseNames.forEach((requiredName) => {
         const normalizedRequired = normalizeName(requiredName);
-        const candidate = allCourses.find((course) => {
-            const normalizedCourse = normalizeName(course.name);
-            if (used.has(course.id)) return false;
-            return (
-                normalizedCourse === normalizedRequired ||
-                normalizedCourse.includes(normalizedRequired) ||
-                normalizedRequired.includes(normalizedCourse)
-            );
-        });
+        const exactMatch = normalizedMap.get(normalizedRequired);
+        let candidate = !exactMatch || used.has(exactMatch.id) ? undefined : exactMatch;
 
         if (!candidate) {
-            const fallback = normalizedMap.get(normalizedRequired);
-            if (fallback) {
-                used.add(fallback.id);
-                requiredCourseIds.push(fallback.id);
-                requiredCourses.push({ ...fallback, requiredName });
+            candidate = allCourses.find((course) => {
+                const normalizedCourse = normalizeName(course.name);
+                if (used.has(course.id)) return false;
+                return (
+                    normalizedCourse.includes(normalizedRequired) ||
+                    normalizedRequired.includes(normalizedCourse)
+                );
+            });
+        }
+
+        if (!candidate) {
+            if (exactMatch && !used.has(exactMatch.id)) {
+                used.add(exactMatch.id);
+                requiredCourseIds.push(exactMatch.id);
+                requiredCourses.push({ ...exactMatch, requiredName });
                 return;
             }
             missingRequiredCourseNames.push(requiredName);
@@ -365,6 +497,98 @@ function mapRequiredCourses(requiredCourseNames: string[], allCourses: PlanningC
     });
 
     return { requiredCourseIds, requiredCourses, missingRequiredCourseNames };
+}
+
+function normalizeCategoryRequirements(rawRequirements: unknown): Partial<Record<GradeCategory, number>> {
+    const normalized: Partial<Record<GradeCategory, number>> = {};
+
+    if (!isRecord(rawRequirements)) return normalized;
+
+    Object.entries(rawRequirements).forEach(([rawCode, rawValue]) => {
+        const code = normalizeCategoryKey(rawCode);
+        if (!code) return;
+        const value = toInt(rawValue);
+        if (!value || value <= 0) return;
+        normalized[code] = value;
+    });
+
+    return normalized;
+}
+
+function resolveCategoryRequirements(
+    rawRequirements: Partial<Record<GradeCategory, number>>,
+    requiredCourseIds: string[],
+    catalogCourses: PlanningCourse[],
+): Partial<Record<GradeCategory, number>> {
+    const explicitRequirements = normalizeCategoryRequirements(rawRequirements);
+    if (Object.keys(explicitRequirements).length > 0) {
+        return explicitRequirements;
+    }
+
+    const derived: Partial<Record<GradeCategory, number>> = {};
+    const courseById = new Map<string, PlanningCourse>(catalogCourses.map((course) => [course.id, course]));
+
+    requiredCourseIds.forEach((courseId) => {
+        const course = courseById.get(courseId);
+        if (!course) return;
+        const categoryCode = course.categoryCode;
+        derived[categoryCode] = (derived[categoryCode] ?? 0) + Math.max(0, course.creditPoints);
+    });
+
+    return derived;
+}
+
+function buildCategoryRequirementChecks(
+    categorySummaries: CategorySummary[],
+    explicitRequirements: Partial<Record<GradeCategory, number>>,
+): CategoryRequirementCheck[] {
+    const explicitByCategory = explicitRequirements;
+    return categorySummaries.map((summary) => {
+        const explicitRequiredCredits = explicitByCategory[summary.categoryCode];
+        const requiredCredits = explicitRequiredCredits ?? summary.requiredCredits;
+        const requiredCourseCount = summary.requiredCourseCount;
+        const completedCourseCount = summary.completedCourseCount;
+        const required = requiredCredits > 0 || requiredCourseCount > 0;
+        const completedCredits = summary.completedCredits;
+        const satisfied = !required
+            ? true
+            : completedCredits >= requiredCredits;
+        const missingCredits = required ? Math.max(0, requiredCredits - completedCredits) : 0;
+
+        return {
+            categoryCode: summary.categoryCode,
+            categoryName: summary.categoryName,
+            requiredCredits,
+            completedCredits,
+            requiredCourseCount,
+            completedCourseCount,
+            required,
+            satisfied,
+            missingCredits,
+        };
+    });
+}
+
+function buildRequirementStatus(
+    requiredCourseCount: number,
+    completedCourseCount: number,
+    missingRequiredCourseNames: string[],
+    categorySummaries: CategorySummary[],
+    explicitRequirements: Partial<Record<GradeCategory, number>>,
+): TrackRequirementStatus {
+    const categoryChecks = buildCategoryRequirementChecks(categorySummaries, explicitRequirements);
+    const requiredCoursesSatisfied = completedCourseCount >= requiredCourseCount && missingRequiredCourseNames.length === 0;
+    const categoryRequirementsSatisfied = categoryChecks.every((check) => check.satisfied);
+
+    return {
+        requiredCoursesSatisfied,
+        categoryRequirementsSatisfied,
+        overallSatisfied: requiredCoursesSatisfied && categoryRequirementsSatisfied,
+        requiredCourseCount,
+        completedCourseCount,
+        missingRequiredCourseNamesCount: missingRequiredCourseNames.length,
+        categoryChecks,
+    };
 }
 
 function buildCategorySummaries(
@@ -445,6 +669,35 @@ export function resolveCurriculumYearRange(): { min: number; max: number; years:
     };
 }
 
+export function getCurriculumCatalogSnapshot(): CurriculumCatalogSnapshot {
+    const root = curriculumRaw as JsonObject;
+    const tracks = parseLegacyTracks(root);
+    const availableYears = getCatalogSourceYears(root);
+    const versions = parseVersions(root).map((version) => ({
+        academicYear: version.academicYear,
+        label: version.label,
+        source: version.sourceYear,
+        isActive: version.isActive,
+        trackRequirements: Object.entries(version.trackRequirements).reduce((acc, [trackKey, trackRequirement]) => {
+            const versionSourceYear = resolveCatalogYear(root, version.sourceYear, availableYears);
+            const catalogCourses = extractCourses(root[versionSourceYear], versionSourceYear);
+            const { requiredCourseIds } = mapRequiredCourses(trackRequirement.requiredCourses, catalogCourses);
+            const resolvedCategoryRequirements = resolveCategoryRequirements(
+                trackRequirement.categoryRequirements,
+                requiredCourseIds,
+                catalogCourses,
+            );
+            acc[trackKey] = {
+                requiredCourses: dedupeOrdered(trackRequirement.requiredCourses),
+                categoryRequirements: resolvedCategoryRequirements,
+            };
+            return acc;
+        }, {} as Record<string, { requiredCourses: string[]; categoryRequirements: Partial<Record<GradeCategory, number>> }>),
+    }));
+
+    return { tracks, versions };
+}
+
 export function buildPlanForTrack(
     trackId: number,
     options: {
@@ -452,6 +705,7 @@ export function buildPlanForTrack(
         completedCourseIds?: string[];
         profileCohortYear?: number | null;
         profileGrade?: number | null;
+        trackIdByKey?: TrackIdByKey;
     } = {},
 ): PlanningRequirementPayload {
     const root = curriculumRaw as JsonObject;
@@ -460,11 +714,11 @@ export function buildPlanForTrack(
         throw new Error('No curriculum version metadata found.');
     }
 
+    const allCatalogYears = getCatalogSourceYears(root);
     const tracks = parseLegacyTracks(root);
     const trackKeys = Object.keys(tracks);
-    const targetTrackIndex = Math.trunc(trackId - 1);
-    const targetTrackKey = trackKeys[targetTrackIndex];
-    if (!Number.isInteger(trackId) || targetTrackIndex < 0 || targetTrackIndex >= trackKeys.length || !targetTrackKey) {
+    const targetTrackKey = resolveTrackKeyById(trackId, trackKeys, options.trackIdByKey);
+    if (!targetTrackKey) {
         throw new Error(`Track not found: ${trackId}`);
     }
 
@@ -482,19 +736,37 @@ export function buildPlanForTrack(
         throw new Error(`Track requirement not found: ${targetTrackKey}`);
     }
 
-    const catalogYear = version.sourceYear;
+    const catalogYear = resolveCatalogYear(root, version.sourceYear, allCatalogYears);
     const catalogCourses = extractCourses(root[catalogYear], catalogYear);
     const requiredCourseNames = dedupeOrdered(trackReq.requiredCourses);
     const { requiredCourseIds, requiredCourses, missingRequiredCourseNames } = mapRequiredCourses(requiredCourseNames, catalogCourses);
     const requiredCourseCount = requiredCourseNames.length;
+    const resolvedCategoryRequirements = resolveCategoryRequirements(
+        trackReq.categoryRequirements,
+        requiredCourseIds,
+        catalogCourses,
+    );
 
     const completionByCourseIds = Array.from(new Set(options.completedCourseIds ?? [])).filter((id) => id);
     const completionSet = new Set(completionByCourseIds);
     const requiredCompleted = requiredCourseIds.filter((id) => completionSet.has(id));
-    const categorySummaries = buildCategorySummaries(catalogCourses, requiredCourseIds, completionByCourseIds, trackReq.categoryRequirements);
+    const categorySummaries = buildCategorySummaries(
+        catalogCourses,
+        requiredCourseIds,
+        completionByCourseIds,
+        resolvedCategoryRequirements,
+    );
     const completionRate = requiredCourseCount > 0 ? (requiredCompleted.length / requiredCourseCount) * 100 : 0;
+    const requirementStatus = buildRequirementStatus(
+        requiredCourseCount,
+        requiredCompleted.length,
+        missingRequiredCourseNames,
+        categorySummaries,
+        trackReq.categoryRequirements,
+    );
 
     const track = tracks[targetTrackKey];
+    const resolvedTrackId = getTrackIdByKey(options.trackIdByKey)[targetTrackKey] || trackId;
     const courses = catalogCourses
         .filter((course) => requiredCourseIds.includes(course.id))
         .map((course) => ({
@@ -507,7 +779,7 @@ export function buildPlanForTrack(
         sourceYear: catalogYear,
         availableYears: versions.map((v) => v.academicYear).sort((a, b) => a - b),
         track: {
-            trackId,
+            trackId: resolvedTrackId,
             trackKey: targetTrackKey,
             trackName: track.name || targetTrackKey,
             requiredCourseCount,
@@ -517,12 +789,16 @@ export function buildPlanForTrack(
             requiredCourseIds,
             completionByCourseIds,
             categorySummaries,
+            requirementStatus,
         },
         courses,
     };
 }
 
-export function buildTracksForYear(requestedYear: number | null): { tracks: CurriculumApiTrack[]; academicYear: number; sourceYear: string; availableYears: number[] } {
+export function buildTracksForYear(
+    requestedYear: number | null,
+    options: PlanBuildOptions = {},
+): { tracks: CurriculumApiTrack[]; academicYear: number; sourceYear: string; availableYears: number[] } {
     const root = curriculumRaw as JsonObject;
     const versions = parseVersions(root);
     if (versions.length === 0) {
@@ -531,7 +807,9 @@ export function buildTracksForYear(requestedYear: number | null): { tracks: Curr
     const range = versions.map((v) => v.academicYear).sort((a, b) => a - b);
     const version = resolveClosestVersion(versions, requestedYear);
     const tracks = parseLegacyTracks(root);
-    const catalogCourses = extractCourses(root[version.sourceYear], version.sourceYear);
+    const allCatalogYears = getCatalogSourceYears(root);
+    const catalogYear = resolveCatalogYear(root, version.sourceYear, allCatalogYears);
+    const catalogCourses = extractCourses(root[catalogYear], catalogYear);
 
     const mappedTracks: CurriculumApiTrack[] = Object.entries(tracks).map(([trackKey, trackValue], index) => {
         const trackReq = version.trackRequirements[trackKey] ?? { requiredCourses: trackValue.required, categoryRequirements: {} };
@@ -547,13 +825,13 @@ export function buildTracksForYear(requestedYear: number | null): { tracks: Curr
             }));
 
         return {
-            id: index + 1,
+            id: getTrackIdByKey(options.trackIdByKey)[trackKey] || index + 1,
             key: trackKey,
             name: trackValue.name || trackKey,
             required: trackReq.requiredCourses,
             courses,
             missingRequired: missingRequiredCourseNames,
-            sourceYear: version.sourceYear,
+            sourceYear: catalogYear,
             requiredCourseCount: requiredCourseNames.length,
             completionYear: version.academicYear,
         };
@@ -562,7 +840,7 @@ export function buildTracksForYear(requestedYear: number | null): { tracks: Curr
     return {
         tracks: mappedTracks,
         academicYear: version.academicYear,
-        sourceYear: version.sourceYear,
+        sourceYear: catalogYear,
         availableYears: range,
     };
 }

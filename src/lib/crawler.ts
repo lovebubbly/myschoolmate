@@ -3,6 +3,7 @@ import { chromium, Page } from 'playwright';
 import { prisma } from '@/lib/prisma';
 import { analyzeNotice } from './gemini';
 import { extractApplicationDeadlineFromText } from '@/lib/deadlineExtractor';
+import { extractTagsByRegex, normalizeTags } from '@/lib/tagging';
 
 export interface NoticeData {
     title: string;
@@ -16,6 +17,7 @@ export interface NoticeData {
     applicationDeadline?: string | null;
     minGpa?: number | null;
     body?: string;
+    tags?: string[];
     isPinned: boolean;
 }
 
@@ -25,6 +27,46 @@ const BOARDS = [
     { name: 'Employment', url: 'https://inform.chungbuk.ac.kr/cisub5_3' },
     { name: 'News', url: 'https://inform.chungbuk.ac.kr/cisub5_4' }
 ];
+
+function normalizeNoticeUrl(rawUrl: string) {
+    try {
+        const u = new URL(rawUrl);
+        u.searchParams.delete('page');
+        return u.toString();
+    } catch {
+        return rawUrl;
+    }
+}
+
+async function syncNoticeTags(noticeId: number, tags: string[]) {
+    const normalized = normalizeTags(tags || []);
+    await prisma.noticeTag.deleteMany({ where: { noticeId } });
+    if (normalized.length === 0) return;
+
+    const existingTags = await prisma.tag.findMany({
+        where: { name: { in: normalized } },
+    });
+    const existingNames = new Set(existingTags.map((tag) => tag.name));
+    const toCreate = normalized.filter((name) => !existingNames.has(name));
+
+    if (toCreate.length > 0) {
+        await prisma.tag.createMany({
+            data: toCreate.map((name) => ({ name })),
+            skipDuplicates: true,
+        });
+    }
+
+    const finalTags = await prisma.tag.findMany({
+        where: { name: { in: normalized } },
+    });
+
+    if (finalTags.length === 0) return;
+
+    await prisma.noticeTag.createMany({
+        data: finalTags.map((tag) => ({ noticeId, tagId: tag.id })),
+        skipDuplicates: true,
+    });
+}
 
 export async function crawlNotices(options?: { refreshExisting?: boolean }): Promise<NoticeData[]> {
     const browser = await chromium.launch({ headless: true });
@@ -217,18 +259,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                     }
 
                     // Incremental Check
-                    // Normalize URL by removing 'page' parameter
-                    const normalizeUrl = (rawUrl: string) => {
-                        try {
-                            const u = new URL(rawUrl);
-                            u.searchParams.delete('page');
-                            return u.toString();
-                        } catch (e) {
-                            return rawUrl;
-                        }
-                    };
-
-                    const normalizedUrl = normalizeUrl(link.url);
+                    const normalizedUrl = normalizeNoticeUrl(link.url);
 
                     const existing = await prisma.notice.findFirst({
                         where: {
@@ -240,46 +271,95 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                     });
 
                     if (existing && existing.processed) {
-                        if (refreshExisting) {
-                            try {
-                                const refreshedBodyContent = await extractBodyContent(link.url);
-                                const shouldUpdateContent = Boolean(refreshedBodyContent) && refreshedBodyContent !== existing.content;
-                                const refreshedDeadline = refreshedBodyContent
-                                    ? extractApplicationDeadlineFromText(`${link.title} ${refreshedBodyContent}`)
-                                    : null;
-                                const shouldUpdateMeta =
-                                    existing.isPinned !== link.isPinned ||
-                                    existing.title !== link.title ||
-                                    existing.date !== link.date ||
-                                    existing.category !== board.name ||
-                                    (refreshedDeadline !== null && refreshedDeadline !== existing.deadline);
+                        const hasMetadataChanged = existing.title !== link.title || existing.date !== link.date || existing.category !== board.name;
 
-                                if (shouldUpdateContent || shouldUpdateMeta) {
+                        if (!refreshExisting) {
+                            if (existing.isPinned !== link.isPinned || hasMetadataChanged) {
+                                await prisma.notice.update({
+                                    where: { id: existing.id },
+                                    data: {
+                                        title: link.title,
+                                        date: link.date,
+                                        category: board.name,
+                                        isPinned: link.isPinned,
+                                    },
+                                });
+                            }
+                            console.log(`Skipping existing: ${link.title}`);
+                            continue;
+                        }
+
+                        if (!hasMetadataChanged) {
+                            if (existing.isPinned !== link.isPinned) {
+                                await prisma.notice.update({
+                                    where: { id: existing.id },
+                                    data: { isPinned: link.isPinned },
+                                });
+                            }
+                            console.log(`Skipping existing: ${link.title}`);
+                            continue;
+                        }
+
+                        try {
+                            const refreshedBodyContent = await extractBodyContent(link.url);
+                            const shouldUpdateContent = Boolean(refreshedBodyContent) && refreshedBodyContent !== existing.content;
+                            const refreshedDeadline = refreshedBodyContent
+                                ? extractApplicationDeadlineFromText(`${link.title} ${refreshedBodyContent}`)
+                                : null;
+                            const shouldUpdateDeadline = refreshedDeadline !== null && refreshedDeadline !== existing.deadline;
+
+                            if (shouldUpdateContent || shouldUpdateDeadline) {
+                                await prisma.notice.update({
+                                    where: { id: existing.id },
+                                    data: {
+                                        title: link.title,
+                                        date: link.date,
+                                        category: board.name,
+                                        content: refreshedBodyContent || existing.content,
+                                        deadline: shouldUpdateDeadline ? refreshedDeadline : existing.deadline,
+                                        isPinned: link.isPinned,
+                                    },
+                                });
+
+                                const refreshedTags = extractTagsByRegex({
+                                    title: link.title,
+                                    body: refreshedBodyContent || existing.content || '',
+                                    category: board.name,
+                                });
+                                await syncNoticeTags(existing.id, refreshedTags);
+
+                                console.log(`Refreshed existing: ${link.title}`);
+                            } else if (hasMetadataChanged || existing.isPinned !== link.isPinned) {
+                                await prisma.notice.update({
+                                    where: { id: existing.id },
+                                    data: {
+                                        title: link.title,
+                                        date: link.date,
+                                        category: board.name,
+                                        isPinned: link.isPinned,
+                                    },
+                                });
+                                console.log(`Updated metadata: ${link.title}`);
+                            } else {
+                                console.log(`Skipping existing: ${link.title}`);
+                            }
+                        } catch (err) {
+                            console.error(`Failed to refresh existing detail ${link.url}`, err);
+                            if (hasMetadataChanged || existing.isPinned !== link.isPinned) {
+                                try {
                                     await prisma.notice.update({
                                         where: { id: existing.id },
                                         data: {
                                             title: link.title,
                                             date: link.date,
                                             category: board.name,
-                                            content: refreshedBodyContent || existing.content,
-                                            deadline: refreshedDeadline ?? existing.deadline,
                                             isPinned: link.isPinned,
                                         },
                                     });
-                                    console.log(`Refreshed existing: ${link.title}`);
-                                } else {
-                                    console.log(`Skipping existing: ${link.title}`);
+                                } catch (fallbackError) {
+                                    console.error(`Failed metadata fallback for existing notice ${link.url}`, fallbackError);
                                 }
-                            } catch (err) {
-                                console.error(`Failed to refresh existing detail ${link.url}`, err);
                             }
-                        } else if (existing.isPinned !== link.isPinned) {
-                            await prisma.notice.update({
-                                where: { id: existing.id },
-                                data: { isPinned: link.isPinned },
-                            });
-                        } else {
-                            console.log(`Skipping existing: ${link.title}`);
                         }
                         continue;
                     }
@@ -289,7 +369,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
 
                         // Analyze with Gemini
                         console.log(`Analyzing (${boardProcessedCount + 1}/${MAX_NOTICES_PER_BOARD}): ${link.title}`);
-                        const analysis = await analyzeNotice(link.title, bodyContent || '');
+                        const analysis = await analyzeNotice(link.title, bodyContent || '', board.name);
 
                         const noticeData: NoticeData = {
                             title: link.title,
@@ -305,7 +385,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
 
                         // Upsert notice
                         // Use normalized URL for storage to prevent duplicates
-                        await prisma.notice.upsert({
+                        const storedNotice = await prisma.notice.upsert({
                             where: { url: normalizedUrl },
                             update: {
                                 title: noticeData.title,
@@ -319,7 +399,7 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                                 scholarshipType: noticeData.scholarshipType,
                                 deadline: noticeData.applicationDeadline,
                                 processed: true,
-                                isPinned: link.isPinned
+                                isPinned: link.isPinned,
                             },
                             create: {
                                 title: noticeData.title,
@@ -334,9 +414,12 @@ export async function crawlNotices(options?: { refreshExisting?: boolean }): Pro
                                 scholarshipType: noticeData.scholarshipType,
                                 deadline: noticeData.applicationDeadline,
                                 processed: true,
-                                isPinned: link.isPinned
-                            }
+                                isPinned: link.isPinned,
+                            },
+                            select: { id: true }
                         });
+
+                        await syncNoticeTags(storedNotice.id, noticeData.tags || []);
 
                         boardProcessedCount++;
                         newItemsOnThisPage++;

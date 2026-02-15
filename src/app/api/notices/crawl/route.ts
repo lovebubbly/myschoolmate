@@ -18,12 +18,22 @@ export async function POST(request: Request) {
 
         // 2. Fetch fresh data from DB
         const notices = await prisma.notice.findMany({
+            include: {
+                tags: {
+                    include: { tag: true },
+                },
+            },
             orderBy: { id: 'desc' }
         });
 
+        const serializedNotices = notices.map((notice) => ({
+            ...notice,
+            tags: Array.isArray(notice.tags) ? notice.tags.map((entry) => entry.tag.name) : [],
+        }));
+
         return NextResponse.json({
             success: true,
-            notices: notices,
+            notices: serializedNotices,
             crawl,
             autoCrawler: getNoticeAutoCrawlerStatus(),
         });

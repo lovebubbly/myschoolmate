@@ -25,6 +25,13 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
 
+      - name: Prepare DB + minimal env
+        run: |
+          echo "DATABASE_URL=file:./dev.db" >> .env
+          echo "AUTH_SECRET=ci-secret" >> .env
+          # Ensure sqlite schema exists (tests can run with empty tables)
+          npx prisma db push
+
       - name: Start app
         run: |
           npm run dev -- --hostname 127.0.0.1 --port 3000 > /tmp/next-dev.log 2>&1 &
@@ -34,6 +41,8 @@ jobs:
             fi
             sleep 1
           done
+          # Print a bit of the log on failure for easier debugging
+          curl -fsS http://127.0.0.1:3000 >/dev/null || (tail -n 200 /tmp/next-dev.log && exit 1)
 
       - name: Run regression suite
         run: npm run e2e:ci

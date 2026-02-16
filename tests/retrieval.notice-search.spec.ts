@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { evaluateSearchConfidence, rankNoticeCandidates } from '@/lib/noticeSearch';
+import { applySemanticRerank, evaluateSearchConfidence, rankNoticeCandidates } from '@/lib/noticeSearch';
 
 function makeCandidate(overrides: Partial<{
   id: number;
@@ -120,5 +120,70 @@ test.describe('notice retrieval ranking', () => {
     const confidence = evaluateSearchConfidence(ranked, 3);
     expect(confidence.low).toBeTruthy();
     expect(confidence.reason).toBe('weak_match');
+  });
+
+  test('should reorder lexical candidates with semantic rerank score', () => {
+    const rankedLexical = [
+      {
+        ...makeCandidate({
+          id: 101,
+          title: '학사 일정 일반 공지',
+        }),
+        score: 9.2,
+        fieldScore: 0.6,
+        recencyScore: 0.4,
+        matchCount: 2,
+        matchedKeywords: ['일반', '공지'],
+      },
+      {
+        ...makeCandidate({
+          id: 102,
+          title: 'OCU 장학생 선발 공지',
+          summary: '장학 신청 자격과 제출 서류 안내',
+        }),
+        score: 7.1,
+        fieldScore: 0.2,
+        recencyScore: 0.3,
+        matchCount: 1,
+        matchedKeywords: ['공지'],
+      },
+    ];
+
+    const reranked = applySemanticRerank(
+      rankedLexical,
+      new Map<number, number>([
+        [101, 0.1],
+        [102, 1],
+      ]),
+      2,
+    );
+
+    expect(reranked[0]?.id).toBe(102);
+    expect((reranked[0]?.hybridScore || 0)).toBeGreaterThan(reranked[1]?.hybridScore || 0);
+  });
+
+  test('should keep confidence when semantic signal is strong even with sparse keyword overlap', () => {
+    const reranked = applySemanticRerank(
+      [
+        {
+          ...makeCandidate({
+            id: 201,
+            title: '재정지원 프로그램 안내',
+            baseScore: 0.01,
+          }),
+          score: 1.2,
+          fieldScore: 0,
+          recencyScore: 0,
+          matchCount: 0,
+          matchedKeywords: [],
+        },
+      ],
+      new Map<number, number>([[201, 0.92]]),
+      1,
+    );
+
+    const confidence = evaluateSearchConfidence(reranked, 2);
+    expect(confidence.low).toBeFalsy();
+    expect(confidence.reason).toBe('ok');
   });
 });

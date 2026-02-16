@@ -102,7 +102,7 @@ export function NavBar() {
                         variant="ghost"
                         size="sm"
                         onClick={() => signIn(undefined, { callbackUrl: '/settings' })}
-                        className="hidden md:inline-flex h-9 px-3 rounded-xl text-muted-foreground hover:text-foreground"
+                        className="hidden md:inline-flex h-9 px-3 rounded-full text-muted-foreground hover:text-foreground"
                     >
                         <LogIn className="w-4 h-4 mr-1.5" />
                         로그인

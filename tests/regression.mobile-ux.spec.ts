@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mockBriefingApi } from './_helpers/mockBriefing';
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000';
 
@@ -21,6 +22,9 @@ async function ensureNoticeCardVisible(page: import('@playwright/test').Page) {
 
 test.describe('Mobile UX Regressions', () => {
   test.describe.configure({ timeout: 120000 });
+  test.beforeEach(async ({ page }) => {
+    await mockBriefingApi(page);
+  });
 
   test('mobile controls should remain usable', async ({ page, request }) => {
     const noticesRes = await request.get(`${BASE_URL}/api/notices?autoCrawl=0`);

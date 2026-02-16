@@ -361,7 +361,7 @@ export default function Settings() {
                                 size="sm"
                                 onClick={handleSendTestEmail}
                                 disabled={testingEmail || !notificationEmail.trim()}
-                                className="h-10 rounded-xl"
+                                className="h-10 rounded-full"
                             >
                                 {testingEmail ? '테스트 중...' : '테스트 메일 보내기'}
                             </Button>
@@ -371,7 +371,7 @@ export default function Settings() {
                                 size="sm"
                                 onClick={handleSendDigest}
                                 disabled={sendingDigest || !emailAlertsEnabled || !notificationEmail.trim()}
-                                className="h-10 rounded-xl"
+                                className="h-10 rounded-full"
                             >
                                 {sendingDigest ? '발송 중...' : '오늘 브리핑 메일 보내기'}
                             </Button>
@@ -420,7 +420,7 @@ export default function Settings() {
                                     variant="outline"
                                     size="sm"
                                     onClick={() => signOut({ callbackUrl: '/settings' })}
-                                    className="h-9 rounded-lg"
+                                    className="h-9 rounded-full"
                                 >
                                     로그아웃
                                 </Button>
@@ -432,7 +432,7 @@ export default function Settings() {
                                             variant="outline"
                                             size="sm"
                                             onClick={() => signIn(provider.id, { callbackUrl: '/settings' })}
-                                            className="h-9 rounded-lg"
+                                            className="h-9 rounded-full"
                                         >
                                             {provider.name} 로그인
                                         </Button>
@@ -442,7 +442,7 @@ export default function Settings() {
                                         variant="outline"
                                         size="sm"
                                         disabled
-                                        className="h-9 rounded-lg"
+                                        className="h-9 rounded-full"
                                     >
                                         {providersReady ? '소셜 로그인 준비중' : '로그인 설정 확인중'}
                                     </Button>

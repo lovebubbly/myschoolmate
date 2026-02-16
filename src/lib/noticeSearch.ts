@@ -1,11 +1,19 @@
 import { parseNoticeDate } from '@/lib/noticePersonalization';
 import { prisma } from '@/lib/prisma';
+import { GoogleGenerativeAI, TaskType } from '@google/generative-ai';
 
 const SEARCH_TABLE_NAME = 'notice_search';
 const DEFAULT_TOP_K = 8;
 const MAX_TOP_K = 10;
 const MIN_KEYWORD_LENGTH = 2;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const EMBEDDING_MODEL_NAME = process.env.GEMINI_EMBEDDING_MODEL || 'text-embedding-004';
+const EMBEDDING_TEXT_LIMIT = 1800;
+const EMBEDDING_REORDER_MIN_CANDIDATES = 4;
+const EMBEDDING_LEXICAL_WEIGHT = 0.45;
+const EMBEDDING_SEMANTIC_WEIGHT = 0.55;
+const SEMANTIC_CONFIDENCE_THRESHOLD = 0.69;
+const EMBEDDING_CACHE_SIZE = 600;
 
 const STOP_WORDS = new Set([
   '공지',
@@ -70,6 +78,8 @@ export type NoticeSearchResult = NoticeSearchDocument & {
   recencyScore: number;
   matchCount: number;
   matchedKeywords: string[];
+  semanticScore?: number;
+  hybridScore?: number;
 };
 
 export type NoticeSearchConfidence = {
@@ -91,7 +101,13 @@ type CandidateInput = NoticeSearchDocument & {
   baseScore: number;
 };
 
+type EmbeddingCacheEntry = {
+  fingerprint: string;
+  vector: number[];
+};
+
 let ensureSearchIndexPromise: Promise<void> | null = null;
+const noticeEmbeddingCache = new Map<number, EmbeddingCacheEntry>();
 
 function clampTopK(topK?: number): number {
   const parsed = Number(topK);
@@ -114,6 +130,189 @@ function normalizeNumber(value: unknown): number | null {
 
 function normalizeQuestion(question: string): string {
   return normalizeSpace(question).toLowerCase();
+}
+
+function buildEmbeddingFingerprint(candidate: NoticeSearchDocument): string {
+  const summary = normalizeSpace(String(candidate.summary || ''));
+  const content = normalizeSpace(String(candidate.content || '')).slice(0, 500);
+  return `${candidate.title}|${candidate.date}|${candidate.deadline || ''}|${summary}|${content}`;
+}
+
+function buildEmbeddingDocumentText(candidate: NoticeSearchResult): string {
+  const parts = [
+    `제목: ${candidate.title}`,
+    `분류: ${candidate.category || '미분류'}`,
+    candidate.date ? `게시일: ${candidate.date}` : '',
+    candidate.deadline ? `마감일: ${candidate.deadline}` : '',
+    candidate.summary ? `요약: ${candidate.summary}` : '',
+    candidate.content ? `본문: ${candidate.content}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return parts.slice(0, EMBEDDING_TEXT_LIMIT);
+}
+
+function normalizeVector(values: unknown): number[] {
+  if (!Array.isArray(values)) return [];
+  const vector = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  return vector.length > 0 ? vector : [];
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const limit = Math.min(a.length, b.length);
+  if (limit === 0) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < limit; i += 1) {
+    const va = a[i];
+    const vb = b[i];
+    dot += va * vb;
+    normA += va * va;
+    normB += vb * vb;
+  }
+
+  if (normA <= 0 || normB <= 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function clamp01(value: number): number {
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function normalizeSemanticScore(cosine: number): number {
+  return clamp01((cosine + 1) / 2);
+}
+
+function normalizeLexicalScore(score: number, minScore: number, maxScore: number): number {
+  if (!Number.isFinite(score)) return 0;
+  if (maxScore <= minScore) return 0.5;
+  return clamp01((score - minScore) / (maxScore - minScore));
+}
+
+function cacheNoticeEmbedding(id: number, fingerprint: string, vector: number[]) {
+  if (!Number.isInteger(id) || vector.length === 0) return;
+  noticeEmbeddingCache.set(id, { fingerprint, vector });
+  while (noticeEmbeddingCache.size > EMBEDDING_CACHE_SIZE) {
+    const oldestKey = noticeEmbeddingCache.keys().next().value;
+    if (typeof oldestKey !== 'number') break;
+    noticeEmbeddingCache.delete(oldestKey);
+  }
+}
+
+function shouldUseEmbeddingRerank(question: string, results: NoticeSearchResult[]): boolean {
+  if (process.env.ENABLE_NOTICE_EMBED_RERANK === '0') return false;
+  if (!process.env.GEMINI_API_KEY) return false;
+  if (results.length < EMBEDDING_REORDER_MIN_CANDIDATES) return false;
+  if (normalizeSpace(question).length < 4) return false;
+  return true;
+}
+
+export function applySemanticRerank(
+  results: NoticeSearchResult[],
+  semanticScoresById: Map<number, number>,
+  topK: number,
+): NoticeSearchResult[] {
+  if (results.length === 0) return [];
+
+  const lexicalScores = results.map((result) => result.score);
+  const minLexicalScore = Math.min(...lexicalScores);
+  const maxLexicalScore = Math.max(...lexicalScores);
+
+  return [...results]
+    .map((result) => {
+      const semanticScore = clamp01(Number(semanticScoresById.get(result.id)) || 0);
+      const lexicalScore = normalizeLexicalScore(result.score, minLexicalScore, maxLexicalScore);
+      const hybridScore = lexicalScore * EMBEDDING_LEXICAL_WEIGHT + semanticScore * EMBEDDING_SEMANTIC_WEIGHT;
+      return {
+        ...result,
+        semanticScore,
+        hybridScore,
+      };
+    })
+    .sort((a, b) => {
+      const hybridDiff = (b.hybridScore || 0) - (a.hybridScore || 0);
+      if (Math.abs(hybridDiff) > 1e-6) return hybridDiff;
+      return b.score - a.score || b.matchCount - a.matchCount || b.id - a.id;
+    })
+    .slice(0, clampTopK(topK));
+}
+
+async function rerankWithEmbeddings(
+  question: string,
+  results: NoticeSearchResult[],
+  topK: number,
+): Promise<NoticeSearchResult[]> {
+  if (!shouldUseEmbeddingRerank(question, results)) {
+    return results.slice(0, clampTopK(topK));
+  }
+
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return results.slice(0, clampTopK(topK));
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: EMBEDDING_MODEL_NAME });
+
+    const queryEmbeddingResponse = await model.embedContent({
+      content: {
+        role: 'user',
+        parts: [{ text: normalizeSpace(question).slice(0, 500) }],
+      },
+      taskType: TaskType.RETRIEVAL_QUERY,
+    });
+    const queryVector = normalizeVector(queryEmbeddingResponse.embedding?.values);
+    if (queryVector.length === 0) return results.slice(0, clampTopK(topK));
+
+    const semanticScoresById = new Map<number, number>();
+    const pending: NoticeSearchResult[] = [];
+
+    for (const result of results) {
+      const fingerprint = buildEmbeddingFingerprint(result);
+      const cached = noticeEmbeddingCache.get(result.id);
+      if (cached && cached.fingerprint === fingerprint && cached.vector.length > 0) {
+        semanticScoresById.set(result.id, normalizeSemanticScore(cosineSimilarity(queryVector, cached.vector)));
+      } else {
+        pending.push(result);
+      }
+    }
+
+    if (pending.length > 0) {
+      const batchResponse = await model.batchEmbedContents({
+        requests: pending.map((result) => ({
+          taskType: TaskType.RETRIEVAL_DOCUMENT,
+          title: result.title.slice(0, 120),
+          content: {
+            role: 'user',
+            parts: [{ text: buildEmbeddingDocumentText(result) }],
+          },
+        })),
+      });
+
+      pending.forEach((result, index) => {
+        const vector = normalizeVector(batchResponse.embeddings?.[index]?.values);
+        if (vector.length === 0) return;
+        const fingerprint = buildEmbeddingFingerprint(result);
+        cacheNoticeEmbedding(result.id, fingerprint, vector);
+        semanticScoresById.set(result.id, normalizeSemanticScore(cosineSimilarity(queryVector, vector)));
+      });
+    }
+
+    if (semanticScoresById.size === 0) {
+      return results.slice(0, clampTopK(topK));
+    }
+
+    return applySemanticRerank(results, semanticScoresById, topK);
+  } catch (error) {
+    console.error('Notice embedding rerank failed:', error);
+    return results.slice(0, clampTopK(topK));
+  }
 }
 
 function escapeLike(value: string): string {
@@ -293,8 +492,9 @@ export function evaluateSearchConfidence(
   const second = results[1];
   const keywordCoverage = keywordCount > 0 ? top.matchCount / keywordCount : 0;
   const margin = second ? top.score - second.score : top.score;
+  const semanticStrong = typeof top.semanticScore === 'number' && top.semanticScore >= SEMANTIC_CONFIDENCE_THRESHOLD;
 
-  const hasWeakSignal = top.matchCount === 0 || top.score < 2.2 || (keywordCount > 0 && keywordCoverage < 0.25);
+  const hasWeakSignal = !semanticStrong && (top.matchCount === 0 || top.score < 2.2 || (keywordCount > 0 && keywordCoverage < 0.25));
   const tooFewKeywords = keywordCount === 0;
   const low = hasWeakSignal || tooFewKeywords;
 
@@ -492,11 +692,12 @@ export async function searchNotices(
 
   await ensureNoticeSearchIndex();
   const candidates = await queryCandidates(normalizedQuestion, topK);
-  const ranked = rankNoticeCandidates(candidates, {
+  const lexicalRanked = rankNoticeCandidates(candidates, {
     question: normalizedQuestion,
     profile: options?.profile,
-    topK,
+    topK: MAX_TOP_K,
   });
+  const ranked = await rerankWithEmbeddings(normalizedQuestion, lexicalRanked, topK);
   const confidence = evaluateSearchConfidence(ranked, keywords.length);
 
   return {

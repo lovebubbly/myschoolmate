@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mockBriefingApi } from './_helpers/mockBriefing';
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000';
 
@@ -8,6 +9,10 @@ type NoticeResponseItem = {
 };
 
 test.describe('Profile + Notice Regression', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockBriefingApi(page);
+  });
+
   test('profile API save should succeed', async ({ request }) => {
     const getRes = await request.get(`${BASE_URL}/api/user/profile`);
     expect(getRes.ok()).toBeTruthy();

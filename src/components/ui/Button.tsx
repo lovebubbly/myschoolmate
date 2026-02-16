@@ -21,11 +21,11 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-12 px-5 py-3 has-[>svg]:px-4",
-        sm: "h-9 rounded-xl px-3 text-sm has-[>svg]:px-2.5",
+        sm: "h-9 rounded-full px-3 text-sm has-[>svg]:px-2.5",
         lg: "h-14 rounded-3xl px-8 text-lg has-[>svg]:px-6",
-        icon: "size-10",
-        "icon-sm": "size-9",
-        "icon-lg": "size-12",
+        icon: "size-10 rounded-full",
+        "icon-sm": "size-9 rounded-full",
+        "icon-lg": "size-12 rounded-full",
       },
     },
     defaultVariants: {

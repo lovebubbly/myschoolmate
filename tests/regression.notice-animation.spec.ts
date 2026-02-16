@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mockBriefingApi } from './_helpers/mockBriefing';
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000';
 
@@ -19,6 +20,9 @@ async function waitForFirstNoticeCard(page: import('@playwright/test').Page) {
 
 test.describe('Notice list animation', () => {
   test.describe.configure({ timeout: 120000 });
+  test.beforeEach(async ({ page }) => {
+    await mockBriefingApi(page);
+  });
 
   test('should switch between card and list layout cleanly', async ({ page, request }) => {
     const noticesRes = await request.get(`${BASE_URL}/api/notices?autoCrawl=0`);

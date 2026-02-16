@@ -7,11 +7,16 @@ MySchoolMate 작업 지침(AGENTS). Next.js 16 + Playwright + Prisma + Gemini + 
 - 이 프로젝트의 애니메이션·인터랙션·UX 개선 요청은 다음 우선 규칙을 따른다.
   - `SKILL.md` 없이도 동작 가능한 기본 가이드를 제공하기 위해, `~/.codex/skills/myschoolmate-ux-animation/SKILL.md`의 절차를 기본 전략으로 간주한다.
   - 새 애니메이션/동작은 `transition`, `transform`, `reduced-motion`, 레이아웃 안정성, 접근성 순서를 우선 점검한다.
-  - UI/UX 회귀는 항상 Playwright를 1순위로 검증한다.
-- 작업 완료 판단의 기본 체크(최소):
-  - `npx playwright test tests/regression.ux.spec.ts`
-  - `npx playwright test tests/regression.notice-animation.spec.ts`
-  - `npx playwright test tests/regression.mobile-ux.spec.ts` (모바일 동작 포함 시)
+  - UI/UX 회귀 검증 도구는 Playwright를 1순위로 사용한다.
+- 작업 완료 판단은 영향도 기반으로 선택 실행한다.
+  - 문서/주석/정적 설정만 변경(런타임 영향 없음): 테스트 생략 가능, 변경 요약만 남긴다.
+  - API/서버/데이터 로직 변경(UI 영향 없음): `npm run lint` + 관련 스크립트/엔드포인트 점검을 우선한다.
+  - 일반 UI 변경(텍스트/스타일/레이아웃): 관련 Playwright 스펙 1개 이상만 타겟 실행한다.
+  - 애니메이션/인터랙션/상태 전이/반응형 영향 변경: 아래 UX 회귀 세트를 최소 실행한다.
+    - `npx playwright test tests/regression.ux.spec.ts`
+    - `npx playwright test tests/regression.notice-animation.spec.ts`
+    - `npx playwright test tests/regression.mobile-ux.spec.ts` (모바일 동작 포함 시)
+  - 대규모 변경/릴리즈 전: `npx playwright test` 전체 실행.
   - 실패 시 해당 테스트에 대응하는 UX 스크린샷/동작 증거를 남긴다.
 - 이 규칙은 “커스텀 인스트럭션”이 없어도 동일하게 적용되며, AGENTS 준수 대상 프로젝트 내부 규칙으로 간주한다.
 
@@ -136,16 +141,35 @@ curl -X POST "http://localhost:3000/api/alerts/email/test" -H "Content-Type: app
 
 ## 7) 테스트/회귀
 
+- 영향도 기반 선택 실행(모든 항목 동시 실행 아님):
+  - 문서/비기능 변경: Playwright 생략 가능
+  - 서버/로직 변경: `npm run lint` + 관련 API/스크립트 점검
+  - 일반 UI 변경: 관련 `tests/regression.*` 스펙 1개 이상 선택 실행
+  - 애니메이션/인터랙션/모바일 UX 영향: 아래 UX 세트 최소 실행
+  - 대규모 변경/릴리즈 전: `npx playwright test` 전체 실행
+
+- 선택 실행 커맨드 예시:
+
 ```bash
-npx playwright test
-npx playwright test tests/regression.deadline-extraction.spec.ts
+# 빠른 기본 점검
+npm run lint
+
+# 일반 UI 변경 시(관련 스펙만 선택)
 npx playwright test tests/regression.profile-notice.spec.ts
-PLAYWRIGHT_BASE_URL=http://localhost:3000 npx playwright test tests/regression.profile-notice.spec.ts
-npx playwright show-report
+npx playwright test tests/regression.deadline-extraction.spec.ts
+
+# 애니메이션/인터랙션/모바일 UX 영향 시 최소 세트
+npx playwright test tests/regression.ux.spec.ts
+npx playwright test tests/regression.notice-animation.spec.ts
+npx playwright test tests/regression.mobile-ux.spec.ts
+
+# 릴리즈/대규모 변경 전 전체 회귀
+npx playwright test
 ```
 
 - 기본 회귀는 `tests/regression.*` 우선
 - 마감일 파서 케이스는 `tests/regression.deadline-extraction.spec.ts`
+- 로컬 서버 기준 점검이 필요하면 `PLAYWRIGHT_BASE_URL=http://localhost:3000`를 지정
 
 ## 8) 운영 전 체크리스트
 

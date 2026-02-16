@@ -16,7 +16,7 @@ type ChatCitation = {
 
 test.describe('Notice Q&A grounded response', () => {
   test('POST /api/chat should return citations with notice links', async ({ request }) => {
-    const noticesRes = await request.get(`${BASE_URL}/api/notices?autoCrawl=0&limit=80`);
+    const noticesRes = await request.get(`${BASE_URL}/api/notices?autoCrawl=0&limit=500`);
     expect(noticesRes.ok()).toBeTruthy();
     const noticesJson = await noticesRes.json();
     expect(noticesJson.success).toBeTruthy();

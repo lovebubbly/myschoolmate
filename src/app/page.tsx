@@ -11,7 +11,7 @@ import { LoadingOverlay, ButtonLoader } from '@/components/LoadingOverlay';
 import { CafeteriaWidget } from '@/components/CafeteriaWidget';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { GripVertical, Layout, Eye, EyeOff, ChevronUp, ChevronDown } from 'lucide-react';
-import { Mascot } from '@/components/Mascot';
+import { NoticeChatbot, type NoticeChatAskResult, type NoticeChatCitation } from '@/components/NoticeChatbot';
 import { CommandPalette } from '@/components/CommandPalette';
 
 import {
@@ -103,14 +103,6 @@ interface NoticeAutoCrawlerStatus {
   lastTrigger: string | null;
 }
 
-interface ChatCitation {
-  id: number;
-  title: string;
-  url: string;
-  date: string;
-  category: string;
-}
-
 type DashboardState = {
   readNoticeIds: number[];
   widgetOrder: string[];
@@ -155,11 +147,6 @@ const BRIEFING_FOCUS_LABEL: Record<BriefingCategory, string> = {
   General: '일반',
   News: '뉴스',
 };
-const NOTICE_CHAT_SUGGESTIONS = [
-  '나 3학년 7분위 3.6인데 이번 주 신청할 만한 장학 뭐야?',
-  'OCU 장학생 선발 공지 핵심만 알려줘',
-  '인턴 모집 마감이 언제고, 준비물 뭐야?',
-];
 
 function normalizeReadNoticeIds(value: unknown): number[] {
   if (!Array.isArray(value)) return [];
@@ -237,10 +224,10 @@ function normalizeRelevanceReasons(value: unknown): RelevanceReason[] {
   );
 }
 
-function normalizeChatCitations(value: unknown): ChatCitation[] {
+function normalizeChatCitations(value: unknown): NoticeChatCitation[] {
   if (!Array.isArray(value)) return [];
 
-  const deduped = new Map<number, ChatCitation>();
+  const deduped = new Map<number, NoticeChatCitation>();
   for (const entry of value) {
     if (!entry || typeof entry !== 'object') continue;
     const raw = entry as Record<string, unknown>;
@@ -434,6 +421,34 @@ function isScholarshipNotice(notice: Pick<Notice, 'title' | 'category' | 'schola
     notice.title.includes('국가장학') ||
     notice.title.includes('학자금')
   );
+}
+
+function isEmploymentNotice(notice: Pick<Notice, 'title' | 'category'>) {
+  const categoryText = String(notice.category || '').toLowerCase();
+  const title = String(notice.title || '');
+  return (
+    categoryText.includes('employment') ||
+    title.includes('인턴') ||
+    title.includes('채용') ||
+    title.includes('현장실습') ||
+    title.includes('취업')
+  );
+}
+
+function toCategoryLabel(category: string) {
+  if (category === 'Academic') return '학사';
+  if (category === 'Scholarship') return '장학';
+  if (category === 'General') return '일반';
+  if (category === 'Employment') return '취업';
+  if (category === 'News') return '뉴스';
+  return '전체';
+}
+
+function compactTitleForSuggestion(title: string, maxLength = 34) {
+  const normalized = String(title || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '이 공지';
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function getDday(deadline: Date) {
@@ -903,7 +918,7 @@ function NoticeDialog({
                       type="button"
                       onClick={() => onActionChange(notice.id, option.value)}
                       disabled={actionSubmitting}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${active
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${active
                         ? 'bg-primary text-primary-foreground border-primary'
                         : 'bg-background text-muted-foreground border-border hover:text-foreground'}`}
                     >
@@ -988,7 +1003,7 @@ export default function Home() {
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatAnswer, setChatAnswer] = useState('');
-  const [chatCitations, setChatCitations] = useState<ChatCitation[]>([]);
+  const [chatCitations, setChatCitations] = useState<NoticeChatCitation[]>([]);
   const [chatSuggestedKeywords, setChatSuggestedKeywords] = useState<string[]>([]);
 
   // Layout & Search State
@@ -1975,9 +1990,9 @@ export default function Home() {
     void fetchBriefing();
   }, [fetchBriefing]);
 
-  const askNoticeQuestion = useCallback(async (questionOverride?: string) => {
-    const nextQuestion = String(questionOverride ?? chatQuestion).trim();
-    if (!nextQuestion) return;
+  const askNoticeQuestion = useCallback(async (rawQuestion: string): Promise<NoticeChatAskResult> => {
+    const nextQuestion = String(rawQuestion || '').trim();
+    if (!nextQuestion) return null;
 
     setChatQuestion(nextQuestion);
     setChatLoading(true);
@@ -1994,19 +2009,33 @@ export default function Home() {
       }
 
       const answer = String(data.answer || '').trim();
+      const normalizedCitations = normalizeChatCitations(data.citations);
       const suggestedKeywords = normalizeTagList(data.suggestedKeywords);
-      setChatAnswer(answer || '해당 공지를 찾지 못했어.');
-      setChatCitations(normalizeChatCitations(data.citations));
+      const resolvedAnswer = answer || '해당 공지를 찾지 못했어.';
+      setChatAnswer(resolvedAnswer);
+      setChatCitations(normalizedCitations);
       setChatSuggestedKeywords(suggestedKeywords);
+      return {
+        answer: resolvedAnswer,
+        citations: normalizedCitations,
+        suggestedKeywords,
+      };
     } catch (error) {
       console.error('Failed to ask notice question:', error);
-      setChatAnswer('해당 공지를 찾지 못했어. 잠시 후 다시 시도해줘.');
+      const fallbackAnswer = '해당 공지를 찾지 못했어. 잠시 후 다시 시도해줘.';
+      const fallbackKeywords = ['장학', '인턴', '마감', '신청 자격'];
+      setChatAnswer(fallbackAnswer);
       setChatCitations([]);
-      setChatSuggestedKeywords(['장학', '인턴', '마감', '신청 자격']);
+      setChatSuggestedKeywords(fallbackKeywords);
+      return {
+        answer: fallbackAnswer,
+        citations: [],
+        suggestedKeywords: fallbackKeywords,
+      };
     } finally {
       setChatLoading(false);
     }
-  }, [chatQuestion]);
+  }, []);
 
   // Filter & Search Logic
   const filteredNotices = useMemo(() => {
@@ -2109,6 +2138,87 @@ export default function Home() {
 
     return Array.from(suggestions).slice(0, 8);
   }, [notices, searchQuery]);
+  const noticeChatSuggestions = useMemo(() => {
+    const categoryScoped = notices.filter((notice) => {
+      const categoryText = String(notice.category || '').toLowerCase();
+      if (selectedCategory === 'ALL') return true;
+      if (selectedCategory === 'Academic') {
+        if (!categoryText.includes('academic')) return false;
+        return !isScholarshipNotice(notice);
+      }
+      if (selectedCategory === 'Scholarship') return isScholarshipNotice(notice);
+      if (selectedCategory === 'Employment') return isEmploymentNotice(notice);
+      if (selectedCategory === 'General') return categoryText.includes('general');
+      if (selectedCategory === 'News') return categoryText.includes('news');
+      return true;
+    });
+    const scopedNotices = categoryScoped.length > 0 ? categoryScoped : notices;
+    const suggestions = new Set<string>();
+
+    const profileTokens: string[] = [];
+    if (filterProfile.grade > 0) profileTokens.push(`${filterProfile.grade}학년`);
+    if (filterProfile.income <= 10) profileTokens.push(`${filterProfile.income}분위`);
+    if (filterProfile.gpa > 0) profileTokens.push(`평점 ${filterProfile.gpa.toFixed(1)}`);
+    const profilePrefix = profileTokens.length > 0 ? `${profileTokens.join(' ')} 기준으로 ` : '';
+
+    const addSuggestion = (value?: string | null) => {
+      const normalized = String(value || '').trim();
+      if (normalized.length > 0) {
+        suggestions.add(normalized);
+      }
+    };
+
+    const upcomingCandidates = scopedNotices
+      .map((notice) => {
+        const parsed = parseDeadline(notice.deadline);
+        const dday = typeof notice.dday === 'number' ? notice.dday : parsed ? getDday(parsed) : null;
+        return { notice, dday };
+      })
+      .filter((entry): entry is { notice: Notice; dday: number } => typeof entry.dday === 'number' && entry.dday >= 0)
+      .sort((a, b) => a.dday - b.dday)
+      .map((entry) => entry.notice);
+    const scholarshipCandidates = scopedNotices.filter((notice) => isScholarshipNotice(notice));
+    const employmentCandidates = scopedNotices.filter((notice) => isEmploymentNotice(notice));
+    const relevanceCandidates = [...scopedNotices].sort(
+      (a, b) => (Number(b.relevanceScore) || 0) - (Number(a.relevanceScore) || 0),
+    );
+
+    if (scholarshipCandidates[0]) {
+      const title = compactTitleForSuggestion(scholarshipCandidates[0].title);
+      addSuggestion(`${profilePrefix}${title} 신청 가능 여부랑 준비 서류만 확인해줘`);
+    }
+    if (employmentCandidates[0]) {
+      const title = compactTitleForSuggestion(employmentCandidates[0].title);
+      addSuggestion(`${title} 지원 자격, 일정, 준비물만 요약해줘`);
+    }
+    if (upcomingCandidates[0]) {
+      const title = compactTitleForSuggestion(upcomingCandidates[0].title);
+      addSuggestion(`${title} 마감일까지 지금 해야 할 일을 순서대로 알려줘`);
+    }
+    if (relevanceCandidates[0]) {
+      const title = compactTitleForSuggestion(relevanceCandidates[0].title);
+      addSuggestion(`${title}에서 놓치면 안 되는 포인트 3개만 알려줘`);
+    }
+
+    const tagCounts = new Map<string, number>();
+    for (const notice of scopedNotices.slice(0, 80)) {
+      for (const tag of notice.tags || []) {
+        const label = getNoticeTagLabel(tag).trim();
+        if (!label) continue;
+        tagCounts.set(label, (tagCounts.get(label) || 0) + 1);
+      }
+    }
+    const topTag = Array.from(tagCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (topTag) {
+      addSuggestion(`이번 주 ${topTag} 관련 공지 중 우선순위 높은 것만 골라줘`);
+    }
+
+    const categoryLabel = toCategoryLabel(selectedCategory);
+    addSuggestion(`${categoryLabel} 공지 기준으로 오늘 확인해야 할 공지 3개만 추천해줘`);
+    addSuggestion('마감 임박 공지를 기준으로 이번 주 할 일 체크리스트 만들어줘');
+
+    return Array.from(suggestions).slice(0, 4);
+  }, [filterProfile.gpa, filterProfile.grade, filterProfile.income, notices, selectedCategory]);
   const browserNotificationPermissionLabel = (() => {
     if (typeof window === 'undefined' || typeof Notification === 'undefined') return '미지원';
     if (Notification.permission === 'granted') return '허용됨';
@@ -2395,7 +2505,7 @@ export default function Home() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="w-8 h-8 rounded-lg hover:bg-muted"
+                                className="w-8 h-8 rounded-full hover:bg-muted"
                                 disabled={index === 0}
                                 onClick={() => moveWidget(id, 'up')}
                               >
@@ -2404,7 +2514,7 @@ export default function Home() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="w-8 h-8 rounded-lg hover:bg-muted"
+                                className="w-8 h-8 rounded-full hover:bg-muted"
                                 disabled={index === widgetOrder.length - 1}
                                 onClick={() => moveWidget(id, 'down')}
                               >
@@ -2416,7 +2526,7 @@ export default function Home() {
                               <Button
                                 variant={enabledWidgets[id] ? "default" : "outline"}
                                 size="icon"
-                                className="w-10 h-10 rounded-xl shadow-sm transition-all duration-300"
+                                className="w-10 h-10 rounded-full shadow-sm transition-all duration-300"
                                 onClick={() => toggleWidget(id)}
                               >
                                 {enabledWidgets[id] ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
@@ -2475,7 +2585,7 @@ export default function Home() {
                   onClick={() => setIsBriefingTuningOpen((prev) => !prev)}
                   aria-expanded={isBriefingTuningOpen}
                   aria-controls="briefing-tuning-panel"
-                  className="h-7 px-2.5 rounded-lg text-[11px] whitespace-nowrap"
+                  className="h-7 px-2.5 rounded-full text-[11px] whitespace-nowrap"
                 >
                   <SlidersHorizontal className="w-3 h-3 mr-1" />
                   맞춤 설정하기
@@ -2545,7 +2655,7 @@ export default function Home() {
                                 key={`briefing-focus-${category}`}
                                 type="button"
                                 onClick={() => toggleBriefingFocusCategory(category)}
-                                className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${selected
+                                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${selected
                                   ? 'bg-primary text-primary-foreground border-primary'
                                   : 'bg-muted/50 text-muted-foreground border-border hover:text-foreground'}`}
                               >
@@ -2561,7 +2671,7 @@ export default function Home() {
                           size="sm"
                           onClick={refreshBriefingWithTuning}
                           disabled={briefingLoading}
-                          className="h-8 px-3 rounded-lg text-xs font-semibold"
+                          className="h-8 px-3 rounded-full text-xs font-semibold"
                         >
                           <Sparkles className="w-3.5 h-3.5 mr-1.5" />
                           튜닝 반영 재생성
@@ -2572,7 +2682,7 @@ export default function Home() {
                           size="sm"
                           onClick={resetBriefingTuning}
                           disabled={briefingLoading}
-                          className="h-8 px-3 rounded-lg text-xs"
+                          className="h-8 px-3 rounded-full text-xs"
                         >
                           기본값으로 초기화
                         </Button>
@@ -2695,146 +2805,6 @@ export default function Home() {
               </AnimatePresence>
             </motion.div>
 
-            <motion.section
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45, delay: 0.2 }}
-              data-testid="notice-chat-panel"
-            >
-              <Card className="p-4 sm:p-5 rounded-[20px] sm:rounded-[24px] border border-border/60 bg-card/75 backdrop-blur-md shadow-sm">
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div>
-                    <h2 className="text-lg font-bold">질문하기</h2>
-                    <p className="text-xs text-muted-foreground">
-                      저장된 공지 내용만 근거로 답하고, 참고한 공지 링크를 함께 보여줘요.
-                    </p>
-                  </div>
-                  <span className="px-2 py-1 rounded-lg text-[10px] font-bold border border-primary/25 bg-primary/10 text-primary">
-                    Grounded Q&A
-                  </span>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Input
-                    data-testid="notice-chat-input"
-                    placeholder="예: OCU 장학생 선발 공지 핵심만 알려줘"
-                    value={chatQuestion}
-                    onChange={(event) => setChatQuestion(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        void askNoticeQuestion();
-                      }
-                    }}
-                    className="h-11 rounded-xl"
-                    aria-label="공지 질문 입력"
-                  />
-                  <Button
-                    type="button"
-                    data-testid="notice-chat-submit"
-                    onClick={() => void askNoticeQuestion()}
-                    disabled={chatLoading || chatQuestion.trim().length < 2}
-                    className="h-11 rounded-xl px-4 sm:px-5 shrink-0"
-                  >
-                    {chatLoading ? <ButtonLoader /> : '질문하기'}
-                  </Button>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {NOTICE_CHAT_SUGGESTIONS.map((question) => (
-                    <Button
-                      key={`notice-chat-suggestion-${question}`}
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2.5 rounded-lg text-[11px]"
-                      onClick={() => {
-                        setChatQuestion(question);
-                        void askNoticeQuestion(question);
-                      }}
-                      disabled={chatLoading}
-                    >
-                      {question}
-                    </Button>
-                  ))}
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-border/60 bg-background/70 p-3 sm:p-4 min-h-[120px]">
-                  {chatLoading ? (
-                    <div className="space-y-2 animate-pulse">
-                      <div className="h-3.5 rounded bg-muted/70 w-full" />
-                      <div className="h-3.5 rounded bg-muted/70 w-10/12" />
-                      <div className="h-3.5 rounded bg-muted/70 w-8/12" />
-                    </div>
-                  ) : chatAnswer ? (
-                    <div className="space-y-3">
-                      <div data-testid="notice-chat-answer" className="text-sm leading-relaxed text-foreground">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkBreaks]}
-                          components={{
-                            p: (props) => <p className="mb-2 last:mb-0" {...props} />,
-                            ul: (props) => <ul className="list-disc pl-5 space-y-1" {...props} />,
-                            li: (props) => <li className="text-sm" {...props} />,
-                            a: (props) => (
-                              <a
-                                {...props}
-                                className="text-blue-600 dark:text-blue-400 hover:underline underline-offset-4 font-semibold"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              />
-                            ),
-                          }}
-                        >
-                          {chatAnswer}
-                        </ReactMarkdown>
-                      </div>
-
-                      {chatCitations.length > 0 && (
-                        <div data-testid="notice-chat-citations" className="pt-2 border-t border-border/60">
-                          <p className="text-[11px] font-semibold text-muted-foreground mb-1.5">근거 링크</p>
-                          <ul className="space-y-1.5">
-                            {chatCitations.map((citation) => (
-                              <li key={`chat-citation-${citation.id}`}>
-                                <a
-                                  href={citation.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs sm:text-sm text-blue-600 dark:text-blue-400 hover:underline underline-offset-4 font-medium"
-                                >
-                                  {citation.title}
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      공지에 대해 자연어로 물어보면, 관련 공지 링크와 함께 답변해줄게.
-                    </p>
-                  )}
-                </div>
-
-                {!chatLoading && chatSuggestedKeywords.length > 0 && (
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] text-muted-foreground">추천 키워드:</span>
-                    {chatSuggestedKeywords.map((keyword) => (
-                      <Button
-                        key={`chat-keyword-${keyword}`}
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2.5 rounded-lg text-[11px] text-primary hover:text-primary"
-                        onClick={() => setChatQuestion(keyword)}
-                      >
-                        #{keyword}
-                      </Button>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            </motion.section>
           </motion.header>
 
           {/* Reorderable Widgets */}
@@ -2877,7 +2847,7 @@ export default function Home() {
                             size="sm"
                             onClick={markAllAsRead}
                             disabled={unreadNoticeCount === 0}
-                            className="rounded-xl"
+                            className="rounded-full"
                           >
                             <CheckCheck className="w-4 h-4 mr-1.5" />
                             모두 읽음
@@ -2938,7 +2908,7 @@ export default function Home() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="h-7 px-2.5 rounded-lg text-[11px]"
+                                className="h-7 px-2.5 rounded-full text-[11px]"
                                 onClick={downloadDeadlineCalendarFeed}
                               >
                                 <Download className="w-3 h-3 mr-1" />
@@ -2947,7 +2917,7 @@ export default function Home() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="h-7 px-2.5 rounded-lg text-[11px]"
+                                className="h-7 px-2.5 rounded-full text-[11px]"
                                 onClick={() => void copyDeadlineCalendarFeedUrl()}
                               >
                                 <Share2 className="w-3 h-3 mr-1" />
@@ -3080,7 +3050,7 @@ export default function Home() {
                           <div className="flex flex-wrap items-center gap-2">
                             <h2 className="text-xl font-bold">공지사항</h2>
                             <div
-                              className="flex items-center gap-1.5 bg-muted/50 px-3 py-1.5 rounded-xl border border-border/50 min-w-0"
+                              className="flex items-center gap-1.5 bg-muted/50 px-3 py-1.5 rounded-full border border-border/50 min-w-0"
                             >
                               <span className="text-xs text-muted-foreground font-medium break-keep">
                                 {filteredNotices.length !== notices.length ? (
@@ -3103,7 +3073,7 @@ export default function Home() {
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
                                 onClick={() => setIsPinnedExpanded(!isPinnedExpanded)}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all duration-300 ${isPinnedExpanded ? 'bg-primary/12 border-primary/35 text-primary shadow-sm ring-1 ring-primary/20' : 'bg-background/85 border-foreground/15 text-foreground/90 hover:bg-background/100 hover:border-primary/30 hover:text-primary/90'}`}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all duration-300 ${isPinnedExpanded ? 'bg-primary/12 border-primary/35 text-primary shadow-sm ring-1 ring-primary/20' : 'bg-background/85 border-foreground/15 text-foreground/90 hover:bg-background/100 hover:border-primary/30 hover:text-primary/90'}`}
                               >
                                 <Sparkles className={`w-3.5 h-3.5 ${isPinnedExpanded ? 'text-primary' : 'text-foreground/80'}`} />
                                 <span className="text-xs font-bold">고정 공지 {pinnedNotices.length}개</span>
@@ -3170,7 +3140,7 @@ export default function Home() {
                               variant="ghost"
                               size="sm"
                               onClick={() => setFavoriteOnly((prev) => !prev)}
-                              className={`h-10 px-4 rounded-xl flex-1 sm:flex-none text-xs font-semibold ${favoriteOnly
+                              className={`h-10 px-4 rounded-full flex-1 sm:flex-none text-xs font-semibold ${favoriteOnly
                                 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
                                 : 'text-muted-foreground border border-border'}`}
                             >
@@ -3182,7 +3152,7 @@ export default function Home() {
                               variant="ghost"
                               size="sm"
                               onClick={() => setShowFilters(!showFilters)}
-                              className={`text-sm h-10 px-4 rounded-xl flex-1 sm:flex-none ${showFilters ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}
+                              className={`text-sm h-10 px-4 rounded-full flex-1 sm:flex-none ${showFilters ? 'bg-primary/10 text-primary' : 'text-muted-foreground'}`}
                             >
                               <SlidersHorizontal className="w-4 h-4 mr-1.5" /> 필터
                             </Button>
@@ -3191,7 +3161,7 @@ export default function Home() {
                               size="sm"
                               onClick={refreshNotices}
                               disabled={loading}
-                              className="h-10 px-4 rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:bg-primary/90 flex-1 sm:flex-none"
+                              className="h-10 px-4 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:bg-primary/90 flex-1 sm:flex-none"
                             >
                               {loading ? <ButtonLoader /> : <RefreshCw className="w-4 h-4 mr-1.5" />}
                               {loading ? '검색 중' : '새로고침'}
@@ -3583,8 +3553,16 @@ export default function Home() {
             onShareNotice={shareNotice}
           />
 
-          {/* AI Mascot */}
-          <Mascot message={briefing ? undefined : "AI 브리핑을 불러오고 있어요..."} />
+          <NoticeChatbot
+            question={chatQuestion}
+            loading={chatLoading}
+            answer={chatAnswer}
+            citations={chatCitations}
+            suggestedKeywords={chatSuggestedKeywords}
+            suggestions={noticeChatSuggestions}
+            onQuestionChange={setChatQuestion}
+            onAsk={askNoticeQuestion}
+          />
         </main>
       </div>
     </div >

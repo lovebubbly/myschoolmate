@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mockBriefingApi } from './_helpers/mockBriefing';
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000';
 
@@ -27,6 +28,10 @@ async function ensureNoticeCardVisible(page: import('@playwright/test').Page) {
 }
 
 test.describe('User Experience Regressions', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockBriefingApi(page);
+  });
+
   test('theme toggle should switch with transition markers', async ({ page }) => {
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
 

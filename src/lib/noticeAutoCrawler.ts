@@ -1,5 +1,6 @@
 import { crawlNotices } from '@/lib/crawler';
 import { prisma } from '@/lib/prisma';
+import { broadcastNewNoticePush } from '@/lib/pushAlerts';
 
 type EnsureFreshResult = {
     triggered: boolean;
@@ -89,6 +90,16 @@ async function runCrawl(trigger: string, options?: TriggerOptions): Promise<Trig
         const crawled = await crawlNotices({
             refreshExisting: options?.refreshExisting === true,
         });
+        if (crawled.length > 0) {
+            void broadcastNewNoticePush(
+                crawled.map((notice) => ({
+                    title: notice.title,
+                    url: notice.url,
+                })),
+            ).catch((error) => {
+                console.error('[noticeAutoCrawler] push broadcast failed:', error);
+            });
+        }
         const nowIso = new Date().toISOString();
         state.lastRunAt = nowIso;
         state.lastSuccessAt = nowIso;

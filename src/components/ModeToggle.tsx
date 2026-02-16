@@ -17,7 +17,7 @@ export function ModeToggle({ className }: ModeToggleProps) {
   const [mounted, setMounted] = React.useState(false)
   const [isTransitioning, setIsTransitioning] = React.useState(false)
   const transitionRef = React.useRef<number | null>(null)
-  const THEME_TRANSITION_MS = 260
+  const THEME_TRANSITION_MS = 320
   const THEME_TRANSITION_EASING = [0.18, 0.89, 0.33, 1] as const
 
   React.useEffect(() => {
@@ -26,9 +26,10 @@ export function ModeToggle({ className }: ModeToggleProps) {
 
   React.useEffect(() => {
     return () => {
-      if (transitionRef.current) {
+      if (transitionRef.current !== null) {
         window.clearTimeout(transitionRef.current)
       }
+      document.documentElement.classList.remove("theme-transition")
     }
   }, [])
 
@@ -41,23 +42,23 @@ export function ModeToggle({ className }: ModeToggleProps) {
 
     const nextTheme = isDark ? "light" : "dark"
     const root = document.documentElement
-    root.classList.add("theme-transition")
+    setTheme(nextTheme)
     setIsTransitioning(true)
 
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setTheme(nextTheme)
-      })
-    })
-
-    if (transitionRef.current) {
+    if (transitionRef.current !== null) {
       window.clearTimeout(transitionRef.current)
     }
 
-    transitionRef.current = window.setTimeout(() => {
-      root.classList.remove("theme-transition")
-      setIsTransitioning(false)
-    }, THEME_TRANSITION_MS)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        root.classList.add("theme-transition")
+        transitionRef.current = window.setTimeout(() => {
+          root.classList.remove("theme-transition")
+          setIsTransitioning(false)
+          transitionRef.current = null
+        }, THEME_TRANSITION_MS)
+      })
+    })
   }, [isDark, isTransitioning, setTheme])
 
   if (!mounted) {

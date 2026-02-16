@@ -28,6 +28,37 @@ type BriefingNoticeInput = {
 type BriefingOptions = {
     maxItems?: number;
     recentDays?: number;
+    tone?: 'friendly' | 'concise' | 'formal' | 'motivational';
+    length?: 'short' | 'medium' | 'long';
+    focusCategories?: string[];
+};
+
+export type GroundedNoticeInput = {
+    id: number;
+    title: string;
+    url: string;
+    date?: string | null;
+    category?: string | null;
+    summary?: string | null;
+    content?: string | null;
+    minGrade?: number | null;
+    maxIncome?: number | null;
+    minGpa?: number | null;
+    scholarshipType?: string | null;
+    deadline?: string | null;
+};
+
+export type GroundedChatProfile = {
+    grade?: number | null;
+    income?: number | null;
+    gpa?: number | null;
+    trackId?: number | null;
+};
+
+export type GroundedChatAnswer = {
+    answer: string;
+    citationIds: number[];
+    keywordHints: string[];
 };
 
 type BriefingProfile = {
@@ -138,6 +169,47 @@ function parseBriefingProfile(profile: string | BriefingProfileInput): BriefingP
     };
 }
 
+function normalizeKeywordHints(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return Array.from(
+        new Set(
+            value
+                .map((item) => String(item || '').trim())
+                .filter((item) => item.length > 0),
+        ),
+    ).slice(0, 4);
+}
+
+function buildGroundedFallbackAnswer(
+    notices: GroundedNoticeInput[],
+    keywordHints: string[],
+): GroundedChatAnswer {
+    if (notices.length === 0) {
+        return {
+            answer: '해당 공지를 찾지 못했어.',
+            citationIds: [],
+            keywordHints: keywordHints.length > 0 ? keywordHints : ['장학', '인턴', '마감', '신청 자격'],
+        };
+    }
+
+    const top = notices.slice(0, 3);
+    const lines = [
+        '질문과 관련된 공지를 찾았어. 아래 공지부터 확인해줘.',
+        ...top.map((notice, index) => {
+            const summary = String(notice.summary || '').trim();
+            const deadline = String(notice.deadline || '').trim();
+            const detail = summary || (deadline ? `마감: ${deadline}` : '세부 내용은 원문 확인');
+            return `${index + 1}. [${notice.title}](${notice.url}) - ${detail}`;
+        }),
+    ];
+
+    return {
+        answer: lines.join('\n'),
+        citationIds: top.map((notice) => notice.id),
+        keywordHints: keywordHints.length > 0 ? keywordHints : ['장학', '인턴', '마감', '신청 자격'],
+    };
+}
+
 function toTimestamp(value?: string | null): number | null {
     if (!value) return null;
 
@@ -166,6 +238,17 @@ function getNoticeTags(notice: BriefingNoticeInput): string[] {
     return Array.isArray(notice.tags)
         ? notice.tags.map((tag) => normalizeText(tag)).filter(Boolean)
         : [];
+}
+
+function matchesFocusCategory(notice: BriefingNoticeInput, categories: string[]): boolean {
+    if (!categories || categories.length === 0) return false;
+    const categoryText = normalizeText(notice.category);
+    const titleText = normalizeText(notice.title);
+    return categories.some((category) => {
+        const normalized = normalizeText(category);
+        if (!normalized) return false;
+        return categoryText.includes(normalized) || titleText.includes(normalized);
+    });
 }
 
 function isHighIncomeNeedBased(notice: BriefingNoticeInput, profile: BriefingProfile): boolean {
@@ -258,7 +341,22 @@ export async function getAIBriefing(
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
     const profile = parseBriefingProfile(userProfile);
-    const maxItems = toSafeInt(options?.maxItems, BRIEFING_MAX_ITEMS, BRIEFING_MAX_ITEMS_MIN, BRIEFING_MAX_ITEMS_MAX);
+    const length = options?.length ?? 'medium';
+    const tone = options?.tone ?? 'friendly';
+    const focusCategories = Array.from(new Set((options?.focusCategories || []).map((category) => normalizeText(category)).filter(Boolean)));
+
+    const maxItemsFromLength = length === 'short'
+        ? 7
+        : length === 'long'
+            ? 18
+            : BRIEFING_MAX_ITEMS;
+
+    const maxItems = toSafeInt(
+        options?.maxItems ?? maxItemsFromLength,
+        maxItemsFromLength,
+        BRIEFING_MAX_ITEMS_MIN,
+        BRIEFING_MAX_ITEMS_MAX,
+    );
     const recentDays = toSafeInt(options?.recentDays, BRIEFING_RECENT_DAYS, BRIEFING_RECENT_DAYS_MIN, BRIEFING_RECENT_DAYS_MAX);
 
     const hour = parseInt(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Seoul' }));
@@ -278,7 +376,9 @@ export async function getAIBriefing(
         .filter((notice) => isProfileMatch(notice, profile))
         .map((notice) => ({
             ...notice,
-            score: scoreNotice(notice, profile) + getRecencyScore(notice.ts, now),
+            score: scoreNotice(notice, profile)
+                + getRecencyScore(notice.ts, now)
+                + (matchesFocusCategory(notice, focusCategories) ? 18 : 0),
         }))
         .filter((notice) => {
             if (profile.income >= 9 && isHighIncomeNeedBased(notice, profile) && notice.score < 0 && !isCareerNotice(notice)) {
@@ -338,9 +438,15 @@ ${JSON.stringify(noticeData, null, 2)}
 1.  **Goal**: Provide a personalized, concise briefing of relevant notices for the user.
 2.  **Language**: Korean.
 3.  **Current Context**: ${timeContext} (Hour: ${hour}).
+3-1. **Tone**: ${tone}
+3-2. **Length**: ${length}
+3-3. **Focus Categories**: ${focusCategories.length > 0 ? focusCategories.join(', ') : '없음'}
 4.  **Tone**: 
     -   **Opening**: Creative, witty, and casual greeting. **Avoid** cliché "Good morning/afternoon". Use something fresh like "Studying hard?", "Time for a break?", "Burning the midnight oil?", or "Ready to start the day?".
     -   **Body**: Warm, encouraging, concise. Like a helpful senior.
+    -   If tone=concise: reduce fluff and keep each item short.
+    -   If tone=formal: use polite and objective wording.
+    -   If tone=motivational: keep a slightly energetic nudge style.
 5.  **User Profile**:
     -   ${profile.raw}
     -   **Income Bracket**: 0 (High Need) ~ 10 (High Income).
@@ -368,6 +474,10 @@ Generate a briefing that:
     -   "As a 4th year student..."
 
 6.  **Start** with your creative greeting.
+7.  **Length Control**:
+    - length=short: prioritize 핵심 2~3개, 전체 분량 최소화
+    - length=medium: 기본 3~5개
+    - length=long: 5개 이상도 가능, 단 정보 중복 금지
 
 Format Example:
 (Creative Greeting)
@@ -392,6 +502,137 @@ Return ONLY the formatted markdown.
     } catch (e) {
         console.error('Gemini Error:', e);
         return '현재 AI 브리핑을 생성할 수 없습니다.';
+    }
+}
+
+export async function getGroundedNoticeAnswer(
+    input: {
+        question: string;
+        notices: GroundedNoticeInput[];
+        profile?: GroundedChatProfile | null;
+        keywordHints?: string[];
+    },
+): Promise<GroundedChatAnswer> {
+    const question = String(input.question || '').trim();
+    const notices = Array.isArray(input.notices) ? input.notices.slice(0, 10) : [];
+    const keywordHints = normalizeKeywordHints(input.keywordHints);
+
+    if (!question) {
+        return {
+            answer: '해당 공지를 찾지 못했어.',
+            citationIds: [],
+            keywordHints: keywordHints.length > 0 ? keywordHints : ['장학', '인턴', '마감', '신청 자격'],
+        };
+    }
+
+    if (notices.length === 0) {
+        return {
+            answer: '해당 공지를 찾지 못했어.',
+            citationIds: [],
+            keywordHints: keywordHints.length > 0 ? keywordHints : ['장학', '인턴', '마감', '신청 자격'],
+        };
+    }
+
+    const normalizedProfile = {
+        grade: Number.isFinite(Number(input.profile?.grade)) ? Number(input.profile?.grade) : null,
+        income: Number.isFinite(Number(input.profile?.income)) ? Number(input.profile?.income) : null,
+        gpa: Number.isFinite(Number(input.profile?.gpa)) ? Number(input.profile?.gpa) : null,
+        trackId: Number.isFinite(Number(input.profile?.trackId)) ? Number(input.profile?.trackId) : null,
+    };
+
+    const noticeContext = notices.map((notice) => ({
+        id: notice.id,
+        title: notice.title,
+        url: notice.url,
+        date: notice.date || '',
+        category: notice.category || '',
+        summary: String(notice.summary || '').slice(0, 320),
+        content: String(notice.content || '').slice(0, 1200),
+        minGrade: notice.minGrade ?? null,
+        maxIncome: notice.maxIncome ?? null,
+        minGpa: notice.minGpa ?? null,
+        scholarshipType: notice.scholarshipType || null,
+        deadline: notice.deadline || null,
+    }));
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        return buildGroundedFallbackAnswer(notices, keywordHints);
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash-lite',
+        generationConfig: { responseMimeType: 'application/json' },
+    });
+
+    const prompt = `
+너는 충북대 정보통신공학부 공지 Q&A 어시스턴트다.
+
+질문:
+${question}
+
+사용자 프로필(JSON):
+${JSON.stringify(normalizedProfile)}
+
+NOTICE_CONTEXT(JSON):
+${JSON.stringify(noticeContext)}
+
+규칙:
+1) 반드시 NOTICE_CONTEXT 안의 정보만 사용한다.
+2) NOTICE_CONTEXT에 없는 공지/링크/세부사항은 절대 만들지 않는다.
+3) 사실을 언급할 때는 해당 공지의 id를 citationIds에 반드시 포함한다.
+4) citationIds에는 NOTICE_CONTEXT에 존재하는 id만 넣는다.
+5) 정보가 부족하면 answer를 정확히 "해당 공지를 찾지 못했어." 로 반환하고 citationIds는 []로 한다.
+6) 답변은 한국어 마크다운으로 2~7문장 이내로 작성한다.
+7) 장학/지원 자격 질문이면 학년/소득분위/GPA 조건 매칭을 짧게 언급한다.
+
+반드시 아래 JSON 스키마 그대로 출력:
+{
+  "answer": "string",
+  "citationIds": [1, 2],
+  "keywordHints": ["키워드1", "키워드2", "키워드3"]
+}
+`;
+
+    try {
+        const result = await model.generateContent(prompt);
+        const parsed = JSON.parse(result.response.text());
+
+        const allowedNoticeIds = new Set(noticeContext.map((notice) => notice.id));
+        const citationIds: number[] = Array.isArray(parsed?.citationIds)
+            ? Array.from(
+                new Set<number>(
+                    parsed.citationIds
+                        .map((id: unknown) => Number(id))
+                        .filter((id) => Number.isInteger(id) && allowedNoticeIds.has(id)),
+                ),
+            ).slice(0, 8)
+            : [];
+
+        const answer = String(parsed?.answer || '').trim() || '해당 공지를 찾지 못했어.';
+        const parsedKeywordHints = normalizeKeywordHints(parsed?.keywordHints);
+
+        if (answer === '해당 공지를 찾지 못했어.') {
+            return {
+                answer,
+                citationIds: [],
+                keywordHints: parsedKeywordHints.length > 0 ? parsedKeywordHints : (keywordHints.length > 0 ? keywordHints : ['장학', '인턴', '마감']),
+            };
+        }
+
+        if (citationIds.length === 0) {
+            return buildGroundedFallbackAnswer(notices, parsedKeywordHints.length > 0 ? parsedKeywordHints : keywordHints);
+        }
+
+        return {
+            answer,
+            citationIds,
+            keywordHints: parsedKeywordHints.length > 0 ? parsedKeywordHints : (keywordHints.length > 0 ? keywordHints : ['장학', '인턴', '마감']),
+        };
+    } catch (error) {
+        console.error('Grounded chat generation error:', error);
+        return buildGroundedFallbackAnswer(notices, keywordHints);
     }
 }
 

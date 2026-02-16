@@ -2,6 +2,19 @@
 
 MySchoolMate 작업 지침(AGENTS). Next.js 16 + Playwright + Prisma + Gemini + NextAuth를 기준으로 정리합니다.
 
+## Codex 기본 규칙 (애니메이션/UX 작업)
+
+- 이 프로젝트의 애니메이션·인터랙션·UX 개선 요청은 다음 우선 규칙을 따른다.
+  - `SKILL.md` 없이도 동작 가능한 기본 가이드를 제공하기 위해, `~/.codex/skills/myschoolmate-ux-animation/SKILL.md`의 절차를 기본 전략으로 간주한다.
+  - 새 애니메이션/동작은 `transition`, `transform`, `reduced-motion`, 레이아웃 안정성, 접근성 순서를 우선 점검한다.
+  - UI/UX 회귀는 항상 Playwright를 1순위로 검증한다.
+- 작업 완료 판단의 기본 체크(최소):
+  - `npx playwright test tests/regression.ux.spec.ts`
+  - `npx playwright test tests/regression.notice-animation.spec.ts`
+  - `npx playwright test tests/regression.mobile-ux.spec.ts` (모바일 동작 포함 시)
+  - 실패 시 해당 테스트에 대응하는 UX 스크린샷/동작 증거를 남긴다.
+- 이 규칙은 “커스텀 인스트럭션”이 없어도 동일하게 적용되며, AGENTS 준수 대상 프로젝트 내부 규칙으로 간주한다.
+
 ## 프로젝트 구조 (요약)
 
 ### app 레이어

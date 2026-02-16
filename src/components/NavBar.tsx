@@ -18,7 +18,7 @@ export function NavBar() {
     const pathname = usePathname();
 
     // Dynamic padding based on scroll
-    const padding = useTransform(scrollY, [0, 100], [24, 12]);
+    const padding = useTransform(scrollY, [0, 100], [18, 10]);
     const logoScale = useTransform(scrollY, [0, 100], [1, 0.9]);
 
     useEffect(() => {
@@ -52,26 +52,25 @@ export function NavBar() {
         <motion.nav
             style={{ paddingTop: padding, paddingBottom: padding }}
             className={cn(
-                "fixed top-0 left-0 right-0 z-50 px-6 flex justify-between items-center transition-all duration-500",
+                "fixed top-0 left-0 right-0 z-50 px-3 sm:px-6 flex justify-between items-center transition-all duration-500",
                 isScrolled
                     ? "border-b border-border/40 bg-background/70 backdrop-blur-xl shadow-lg shadow-black/5"
                     : "bg-transparent border-transparent"
             )}
         >
-            <motion.div style={{ scale: logoScale }} className="flex items-center gap-3">
-                <Link href="/" className="hover:opacity-80 transition-all flex items-center gap-2">
+            <motion.div style={{ scale: logoScale }} className="flex items-center gap-2 sm:gap-3 min-w-0">
+                <Link href="/" className="hover:opacity-80 transition-all flex items-center gap-1.5 sm:gap-2 shrink-0">
                 {/* Mobile Logo (Shield) */}
                     <motion.img
                         src="/mobile-logo.png"
                         alt="충북대학교"
-                        className="h-9 w-auto md:hidden block object-contain"
+                        className="h-8 w-auto md:hidden block object-contain"
                         whileHover={{ rotate: [0, -5, 5, 0] }}
                         transition={{ duration: 0.5 }}
                     />
-                    {/* Desktop Logo (Full Text) */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {/* Desktop Logo */}
                     <img
-                        src="https://inform.chungbuk.ac.kr/layouts/INFORM/img/logo_d.png"
+                        src="/mobile-logo.png"
                         alt="충북대학교 정보통신공학부"
                         className="h-8 w-auto hidden md:block brightness-0 dark:brightness-100 dark:invert-0"
                     />
@@ -92,7 +91,7 @@ export function NavBar() {
                 )}
             </motion.div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
                 {status === 'authenticated' ? (
                     <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-semibold mr-1">
                         <UserRound className="w-3.5 h-3.5" />
@@ -119,23 +118,25 @@ export function NavBar() {
                         key={item.href}
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
+                        className="shrink-0"
                     >
                         <Button
                             asChild
                             variant="ghost"
                             className={cn(
                                 pathname === item.href ? "text-foreground bg-muted/50" : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                                isScrolled ? "h-9 px-3" : "h-10 px-4"
+                                "h-9 px-2 sm:px-3 text-base"
                             )}
                         >
                             <Link
                                 href={item.href}
                                 aria-current={pathname === item.href ? "page" : undefined}
                                 aria-label={item.label}
+                                className="inline-flex items-center"
                             >
                                 <span className="sr-only">{item.label}</span>
-                                <item.icon className={cn("mr-1.5", isScrolled ? "w-4 h-4" : "w-4 h-4")} />
-                                <span className={isScrolled ? "hidden md:inline text-sm" : "text-sm"}>
+                                <item.icon className="w-4 h-4 md:mr-1.5" />
+                                <span className="hidden md:inline text-sm">
                                     {item.label}
                                 </span>
                             </Link>
@@ -143,9 +144,9 @@ export function NavBar() {
                     </motion.div>
                 ))}
 
-                <div className="ml-1 pl-1 border-l border-border/50 flex items-center">
+                <div className="ml-0.5 sm:ml-1 pl-0.5 sm:pl-1 border-l border-border/50 flex items-center shrink-0">
                     <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                        <ModeToggle className={cn(isScrolled ? "h-9 w-9" : "h-10 w-10")} />
+                        <ModeToggle className="h-9 w-9 sm:h-10 sm:w-10" />
                     </motion.div>
                 </div>
             </div>

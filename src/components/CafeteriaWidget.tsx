@@ -111,14 +111,14 @@ export function CafeteriaWidget() {
                 transition: { duration: 0.2 }
             }}
         >
-            <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md p-6 rounded-[32px] shadow-sm hover:shadow-xl hover:shadow-orange-500/5 transition-all duration-300 hover:border-orange-200/30 dark:hover:border-orange-800/30">
+            <Card className="relative overflow-hidden border-border/40 bg-card/60 backdrop-blur-md p-4 sm:p-6 rounded-[24px] sm:rounded-[32px] shadow-sm hover:shadow-xl hover:shadow-orange-500/5 transition-all duration-300 hover:border-orange-200/30 dark:hover:border-orange-800/30">
                 {/* Header */}
-                <div className="flex justify-between items-center mb-6">
-                    <div className="flex items-center gap-3">
+                <div className="flex justify-between items-start sm:items-center gap-3 mb-6">
+                    <div className="flex items-start sm:items-center gap-2 sm:gap-3 min-w-0">
                             <div className="bg-gradient-to-br from-orange-100 to-rose-100 dark:from-orange-950/30 dark:to-rose-950/30 p-2.5 rounded-2xl">
                             <Utensils className="w-5 h-5 text-orange-500" />
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                             <Button
                                 variant="ghost"
                                 size="icon"
@@ -128,7 +128,7 @@ export function CafeteriaWidget() {
                             >
                                 <span className="text-lg text-muted-foreground/70">‹</span>
                             </Button>
-                            <h2 className="text-xl font-bold bg-gradient-to-r from-orange-500 to-rose-500 bg-clip-text text-transparent transform translate-y-[1px]">
+                            <h2 className="text-base sm:text-xl font-bold bg-gradient-to-r from-orange-500 to-rose-500 bg-clip-text text-transparent transform translate-y-[1px] whitespace-nowrap">
                                 {getDayLabel(selectedDate)} 학식
                             </h2>
                             <Button
@@ -155,14 +155,14 @@ export function CafeteriaWidget() {
                 </div>
 
                 {/* Restaurant Tabs (Sliding Pill) */}
-                <div className="flex p-1 mb-6 bg-muted/40 rounded-full relative">
+                <div className="flex p-1 mb-6 bg-muted/40 rounded-full relative overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     {['Hanbit', 'Star', 'Eunhasu'].map(rest => (
                         <button
                             key={rest}
                             type="button"
                             aria-label={`${rest} 식당 학식 보기`}
                             onClick={() => setSelectedRest(rest)}
-                            className={`flex-1 relative py-2 text-sm font-bold rounded-full transition-colors z-10 ${selectedRest === rest ? 'text-white' : 'text-muted-foreground hover:text-foreground/80'}`}
+                            className={`flex-1 min-w-[88px] relative py-2 text-sm font-bold rounded-full transition-colors z-10 ${selectedRest === rest ? 'text-white' : 'text-muted-foreground hover:text-foreground/80'}`}
                         >
                             {selectedRest === rest && (
                                 <motion.div
@@ -177,7 +177,7 @@ export function CafeteriaWidget() {
                 </div>
 
                 {/* Meal Time Tabs (Dynamic Icon) */}
-                <div className="flex justify-center gap-6 mb-6">
+                <div className="flex justify-center gap-4 sm:gap-6 mb-6">
                     {[
                         { id: 'BREAKFAST' as MealType, label: '아침', icon: Coffee },
                         { id: 'LUNCH' as MealType, label: '점심', icon: Sun },
@@ -195,7 +195,7 @@ export function CafeteriaWidget() {
                                 disabled={!isAvailable}
                                 className={`flex flex-col items-center gap-2 group transition-all ${!isAvailable ? 'opacity-30 grayscale cursor-not-allowed' : 'cursor-pointer'}`}
                             >
-                                <div className={`p-3.5 rounded-[20px] transition-all duration-300 ${isActive ? 'bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/25 scale-110' : 'bg-muted/50 text-muted-foreground group-hover:bg-muted group-hover:scale-105'}`}>
+                                <div className={`p-3 sm:p-3.5 rounded-[20px] transition-all duration-300 ${isActive ? 'bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-lg shadow-orange-500/25 scale-110' : 'bg-muted/50 text-muted-foreground group-hover:bg-muted group-hover:scale-105'}`}>
                                     <type.icon className="w-5 h-5" strokeWidth={2.5} />
                                 </div>
                                 <span className={`text-[11px] font-bold tracking-tight ${isActive ? 'text-orange-600 dark:text-orange-400' : 'text-muted-foreground'}`}>{type.label}</span>

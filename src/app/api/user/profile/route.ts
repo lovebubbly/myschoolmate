@@ -10,6 +10,13 @@ import { ensurePlanningCatalogSeeded } from '@/lib/planningCatalogSeed';
 export const dynamic = 'force-dynamic';
 
 const VALID_WIDGET_IDS = ['inbox', 'cafeteria', 'notices'] as const;
+const VALID_BRIEFING_TONES = ['friendly', 'concise', 'formal', 'motivational'] as const;
+const VALID_BRIEFING_LENGTHS = ['short', 'medium', 'long'] as const;
+const VALID_BRIEFING_FOCUS_CATEGORIES = ['Academic', 'Scholarship', 'Employment', 'General', 'News'] as const;
+
+type BriefingTone = (typeof VALID_BRIEFING_TONES)[number];
+type BriefingLength = (typeof VALID_BRIEFING_LENGTHS)[number];
+type BriefingCategory = (typeof VALID_BRIEFING_FOCUS_CATEGORIES)[number];
 
 type DashboardState = {
     readNoticeIds?: number[];
@@ -18,6 +25,11 @@ type DashboardState = {
         inbox?: boolean;
         cafeteria?: boolean;
         notices?: boolean;
+    };
+    briefing?: {
+        tone?: BriefingTone;
+        length?: BriefingLength;
+        focusCategories?: BriefingCategory[];
     };
 };
 
@@ -164,6 +176,50 @@ function parseDashboardState(value: unknown) {
         }
 
         next.enabledWidgets = enabled;
+    }
+
+    const rawBriefing = raw.briefing ?? raw.briefingOptions ?? raw.briefingSettings;
+    if (rawBriefing !== undefined) {
+        if (rawBriefing === null) {
+            next.briefing = {};
+        } else if (typeof rawBriefing !== 'object' || Array.isArray(rawBriefing)) {
+            return { provided: true, value: null as DashboardState | null, invalid: true };
+        } else {
+            const briefingRaw = rawBriefing as Record<string, unknown>;
+            const parsedBriefing: NonNullable<DashboardState['briefing']> = {};
+
+            if ('tone' in briefingRaw) {
+                const tone = String(briefingRaw.tone ?? '').trim();
+                if ((VALID_BRIEFING_TONES as readonly string[]).includes(tone)) {
+                    parsedBriefing.tone = tone as BriefingTone;
+                } else if (tone) {
+                    return { provided: true, value: null as DashboardState | null, invalid: true };
+                }
+            }
+
+            if ('length' in briefingRaw) {
+                const length = String(briefingRaw.length ?? '').trim();
+                if ((VALID_BRIEFING_LENGTHS as readonly string[]).includes(length)) {
+                    parsedBriefing.length = length as BriefingLength;
+                } else if (length) {
+                    return { provided: true, value: null as DashboardState | null, invalid: true };
+                }
+            }
+
+            if ('focusCategories' in briefingRaw) {
+                if (!Array.isArray(briefingRaw.focusCategories)) {
+                    return { provided: true, value: null as DashboardState | null, invalid: true };
+                }
+                const categories = Array.from(new Set(
+                    briefingRaw.focusCategories
+                        .map((item) => String(item ?? '').trim())
+                        .filter((item): item is BriefingCategory => (VALID_BRIEFING_FOCUS_CATEGORIES as readonly string[]).includes(item)),
+                ));
+                parsedBriefing.focusCategories = categories;
+            }
+
+            next.briefing = parsedBriefing;
+        }
     }
 
     return { provided: true, value: next };

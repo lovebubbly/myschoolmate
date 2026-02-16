@@ -31,6 +31,8 @@ model Notice {
   
   // Tags (N:M)
   tags      NoticeTagOnNotice[]
+  actions   NoticeAction[]
+  favorites NoticeFavorite[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -52,6 +54,10 @@ model UserProfile {
   dashboardState String?
   track     Track?   @relation(fields: [trackId], references: [id])
   plannerProgresses PlannerProgress[]
+  noticeActions NoticeAction[]
+  noticePresets NoticePreset[]
+  noticeFavorites NoticeFavorite[]
+  pushSubscriptions PushSubscription[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -137,6 +143,68 @@ model NoticeTagOnNotice {
   @@id([noticeId, tagId])
   @@index([tagId])
   @@index([noticeId])
+}
+
+model NoticeAction {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  noticeId  Int
+  state     String   // todo | in_progress | done | dismissed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notice Notice      @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, noticeId])
+  @@index([userId, state])
+  @@index([noticeId])
+}
+
+model NoticeFavorite {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  noticeId  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notice Notice      @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, noticeId])
+  @@index([userId])
+  @@index([noticeId])
+}
+
+model PushSubscription {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, endpoint])
+  @@index([userId])
+}
+
+model NoticePreset {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  name             String
+  categories       String?
+  tags             String?
+  profileOverrides String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model DailyBriefing {

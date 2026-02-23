@@ -10,6 +10,7 @@ import {
 import { applySessionCookieHeader } from '@/lib/sessionUser';
 import { resolveUserProfile } from '@/lib/userProfileResolver';
 import {
+  computeEligibility,
   computeRelevance,
   computeDday,
   normalizeActionState,
@@ -27,6 +28,8 @@ const MAX_NOTICE_LIMIT = 500;
 type NoticeSortMode = 'latest' | 'relevance' | 'deadline';
 type NormalizedCategory = 'Academic' | 'Scholarship' | 'General' | 'Employment' | 'News';
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
+const ELIGIBILITY_EXPLAIN_ENABLED =
+  process.env.FEATURE_ELIGIBILITY_EXPLAIN === '1' || process.env.NODE_ENV !== 'production';
 
 function normalizeNoticeLimit(raw: string | null) {
   const parsed = Number(raw);
@@ -201,6 +204,8 @@ export async function GET(request: Request) {
     const sort = normalizeSort(searchParams.get('sort'));
     const deadlineWithinDays = normalizePositiveInt(searchParams.get('deadlineWithinDays'));
     const favoriteOnly = normalizeBooleanFlag(searchParams.get('favoriteOnly'));
+    const eligibilityExplainEnabled = ELIGIBILITY_EXPLAIN_ENABLED;
+    const eligibleOnly = eligibilityExplainEnabled && normalizeBooleanFlag(searchParams.get('eligibleOnly'));
 
     const rawTags = searchParams.getAll('tags');
     const tagMode = (searchParams.get('mode') || searchParams.get('tagMode') || 'any').toLowerCase() === 'all' ? 'all' : 'any';
@@ -368,12 +373,24 @@ export async function GET(request: Request) {
           },
           recommendationProfile,
         );
+        const eligibility = eligibilityExplainEnabled
+          ? computeEligibility(
+              {
+                minGrade: notice.minGrade,
+                maxIncome: notice.maxIncome,
+                minGpa: notice.minGpa,
+              },
+              recommendationProfile,
+            )
+          : null;
 
         if (deadlineWithinDays !== null && relevance.dday !== null) {
           if (relevance.dday < 0 || relevance.dday > deadlineWithinDays) return null;
         } else if (deadlineWithinDays !== null && relevance.dday === null) {
           return null;
         }
+
+        if (eligibleOnly && eligibility?.status !== 'eligible') return null;
 
         const isFavorite = favoriteNoticeIdSet.has(notice.id);
         if (favoriteOnly && !isFavorite) return null;
@@ -398,6 +415,9 @@ export async function GET(request: Request) {
           isUrgent: relevance.isUrgent,
           urgency: relevance.urgency,
           dday: relevance.dday,
+          ...(eligibilityExplainEnabled && eligibility
+            ? { eligibilityStatus: eligibility.status, eligibilityReasons: eligibility.reasons }
+            : {}),
           actionState,
           isFavorite,
           favoriteCount,

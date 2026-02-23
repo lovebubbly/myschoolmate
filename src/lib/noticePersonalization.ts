@@ -17,6 +17,10 @@ export type RecommendationProfile = {
   trackId: number | null;
 };
 
+export type EligibilityStatus = 'eligible' | 'ineligible' | 'unknown';
+
+export type EligibilityReason = 'grade_below_min' | 'gpa_below_min' | 'income_above_max';
+
 export type PersonalizedNoticeInput = {
   title: string;
   category: string;
@@ -129,6 +133,47 @@ export function normalizeRecommendationProfile(input: Partial<RecommendationProf
     income: Math.min(10, Math.max(0, toSafeInt(input.income, 10))),
     gpa: Math.min(4.5, Math.max(0, Number.isFinite(Number(input.gpa)) ? Number(input.gpa) : 0)),
     trackId: input.trackId === null || input.trackId === undefined ? null : Math.max(1, toSafeInt(input.trackId, 1)),
+  };
+}
+
+export function computeEligibility(
+  notice: Pick<PersonalizedNoticeInput, 'minGrade' | 'maxIncome' | 'minGpa'>,
+  profile: RecommendationProfile,
+): {
+  status: EligibilityStatus;
+  reasons: EligibilityReason[];
+} {
+  const reasons: EligibilityReason[] = [];
+  let hasCriteria = false;
+
+  if (typeof notice.minGrade === 'number' && Number.isFinite(notice.minGrade)) {
+    hasCriteria = true;
+    if (profile.grade < notice.minGrade) {
+      reasons.push('grade_below_min');
+    }
+  }
+
+  if (typeof notice.minGpa === 'number' && Number.isFinite(notice.minGpa)) {
+    hasCriteria = true;
+    if (profile.gpa < notice.minGpa) {
+      reasons.push('gpa_below_min');
+    }
+  }
+
+  if (typeof notice.maxIncome === 'number' && Number.isFinite(notice.maxIncome)) {
+    hasCriteria = true;
+    if (profile.income > notice.maxIncome) {
+      reasons.push('income_above_max');
+    }
+  }
+
+  if (!hasCriteria) {
+    return { status: 'unknown', reasons: [] };
+  }
+
+  return {
+    status: reasons.length > 0 ? 'ineligible' : 'eligible',
+    reasons,
   };
 }
 

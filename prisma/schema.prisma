@@ -230,3 +230,21 @@ model CafeteriaMenu {
 
   @@unique([restaurant, date, mealType])
 }
+
+// --- System tables (ops/observability) ---
+// Generic metadata store for small JSON blobs.
+model SystemMeta {
+  key       String   @id
+  json      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Simple distributed lock for cron-like jobs (best-effort).
+model SystemLock {
+  name       String   @id
+  lockedUntil DateTime?
+  lockedBy   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

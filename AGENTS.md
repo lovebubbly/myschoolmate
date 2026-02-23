@@ -2,6 +2,12 @@
 
 MySchoolMate 작업 지침(AGENTS). Next.js 16 + Playwright + Prisma + Gemini + NextAuth를 기준으로 정리합니다.
 
+## Codex 기본 규칙 (프론트엔드 작업)
+
+- 이 프로젝트의 프론트엔드 작업(페이지/컴포넌트/UI 스타일/레이아웃/접근성/상태 기반 상호작용)은 `~/.codex/skills/myschoolmate-frontend-replica/SKILL.md`를 전역 기본 전략으로 간주한다.
+- 프론트엔드 요청에서는 별도 지시가 없어도 위 스킬의 로드 순서와 계약(디자인 토큰, `layoutId`, `data-testid`, `aria-label`, localStorage key)을 먼저 준수한다.
+- 애니메이션/인터랙션 중심 변경은 `myschoolmate-frontend-replica` + `myschoolmate-ux-animation`을 함께 적용하고, 모션 및 회귀 검증 기준은 UX animation 규칙을 우선한다.
+
 ## Codex 기본 규칙 (애니메이션/UX 작업)
 
 - 이 프로젝트의 애니메이션·인터랙션·UX 개선 요청은 다음 우선 규칙을 따른다.

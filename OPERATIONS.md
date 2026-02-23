@@ -141,9 +141,29 @@
 - `/api/alerts/email/test` 잘못된 이메일 400 확인
 - `/api/alerts/email/digest`에서 `summary.failedReasons` 및 실패건 수가 수치화되는지 확인
 
+## 12) DOM 드리프트 체크
+
+- 수동 캡처 스크립트: `npx tsx scripts/dom_fingerprint.ts`
+- 상태 조회: `GET /api/admin/dom-fingerprint`
+- 강제 실행: `POST /api/admin/dom-fingerprint/run`
+- 해석 가이드
+  - `changed: true`면 이전 해시 대비 DOM 구조 변화 가능성
+  - `selectorHealth`의 `hasTable/hasSubjectLink/rowCount` 등으로 셀렉터 깨짐 여부 확인
+  - `sampleTitle`은 페이지 정상 로드 여부 sanity-check 용
+- 운영 API 호출 시 기존 `ADMIN_ACTION_TOKEN` 가드 규칙 동일 적용
+
+## 13) 운영 스냅샷(원샷 JSON)
+
+- 로컬 스크립트: `npx tsx scripts/ops_snapshot.ts`
+- 상태 조회(API): `GET /api/admin/ops-snapshot`
+- 포함 내용
+  - DB: `noticeCount`, `latestNoticeUpdatedAt`
+  - 크롤러: `autoCrawler` 상태(최근 성공/실패 등)
+  - DOM: 보드별 fingerprint 변경 여부(`changed`) 요약
+
 ---
 
-## 12) 파일 변경 이력(운영 반영 기준)
+## 14) 파일 변경 이력(운영 반영 기준)
 
 - `/src/lib/adminActionGuard.ts`
 - `/src/app/api/notices/crawl/route.ts`

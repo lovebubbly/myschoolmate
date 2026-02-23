@@ -605,7 +605,7 @@ ${JSON.stringify(noticeContext)}
                 new Set<number>(
                     parsed.citationIds
                         .map((id: unknown) => Number(id))
-                        .filter((id) => Number.isInteger(id) && allowedNoticeIds.has(id)),
+                        .filter((id: number) => Number.isInteger(id) && allowedNoticeIds.has(id)),
                 ),
             ).slice(0, 8)
             : [];

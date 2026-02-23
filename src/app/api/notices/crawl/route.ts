@@ -76,7 +76,7 @@ export async function POST(request: Request) {
             success: true,
             notices: serializedNotices,
             crawl,
-            autoCrawler: getNoticeAutoCrawlerStatus(),
+            autoCrawler: await getNoticeAutoCrawlerStatus(),
         });
     } catch (error) {
         console.error('Crawl Error:', error);

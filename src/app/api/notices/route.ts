@@ -450,7 +450,7 @@ export async function GET(request: Request) {
           tags,
         }
         : null,
-      autoCrawler: getNoticeAutoCrawlerStatus(),
+      autoCrawler: await getNoticeAutoCrawlerStatus(),
     });
     applySessionCookieHeader(response, session.setCookie);
     return response;

@@ -3,11 +3,19 @@ import { getGroundedNoticeAnswer } from '@/lib/gemini';
 import { searchNotices } from '@/lib/noticeSearch';
 import { applySessionCookieHeader } from '@/lib/sessionUser';
 import { resolveUserProfile } from '@/lib/userProfileResolver';
+import {
+  applyRateLimitHeaders,
+  buildRateLimitKeyFromRequest,
+  checkRateLimit,
+  type RateLimitDecision,
+} from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_QUESTION_LENGTH = 400;
 const MIN_QUESTION_LENGTH = 2;
+const CHAT_RATE_LIMIT_MAX = parsePositiveInt(process.env.CHAT_RATE_LIMIT_MAX, 20);
+const CHAT_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.CHAT_RATE_LIMIT_WINDOW_MS, 60_000);
 
 type Citation = {
   id: number;
@@ -16,6 +24,13 @@ type Citation = {
   date: string;
   category: string;
 };
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const rounded = Math.trunc(parsed);
+  return rounded > 0 ? rounded : fallback;
+}
 
 function normalizeQuestion(value: unknown): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -39,7 +54,32 @@ function appendCitationMarkdown(answer: string, citations: Citation[]): string {
   return `${answer}\n\n### 참고한 공지\n${citationLines.join('\n')}`;
 }
 
+function withRateLimitHeaders(response: NextResponse, rateLimit: RateLimitDecision): NextResponse {
+  applyRateLimitHeaders(response, rateLimit);
+  return response;
+}
+
 export async function POST(request: Request) {
+  const rateLimit = checkRateLimit({
+    namespace: 'api:chat',
+    key: buildRateLimitKeyFromRequest(request),
+    limit: CHAT_RATE_LIMIT_MAX,
+    windowMs: CHAT_RATE_LIMIT_WINDOW_MS,
+  });
+
+  if (!rateLimit.allowed) {
+    return withRateLimitHeaders(
+      NextResponse.json(
+        {
+          success: false,
+          error: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.',
+        },
+        { status: 429 },
+      ),
+      rateLimit,
+    );
+  }
+
   try {
     const session = await resolveUserProfile(request);
 
@@ -53,22 +93,28 @@ export async function POST(request: Request) {
     const question = normalizeQuestion((body as { question?: unknown } | null)?.question);
 
     if (question.length < MIN_QUESTION_LENGTH) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: '질문은 2자 이상 입력해 주세요.',
-        },
-        { status: 400 },
+      return withRateLimitHeaders(
+        NextResponse.json(
+          {
+            success: false,
+            error: '질문은 2자 이상 입력해 주세요.',
+          },
+          { status: 400 },
+        ),
+        rateLimit,
       );
     }
 
     if (question.length > MAX_QUESTION_LENGTH) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `질문은 ${MAX_QUESTION_LENGTH}자 이하로 입력해 주세요.`,
-        },
-        { status: 400 },
+      return withRateLimitHeaders(
+        NextResponse.json(
+          {
+            success: false,
+            error: `질문은 ${MAX_QUESTION_LENGTH}자 이하로 입력해 주세요.`,
+          },
+          { status: 400 },
+        ),
+        rateLimit,
       );
     }
 
@@ -91,7 +137,7 @@ export async function POST(request: Request) {
         suggestedKeywords: retrieval.retryKeywords,
       });
       applySessionCookieHeader(response, session.setCookie);
-      return response;
+      return withRateLimitHeaders(response, rateLimit);
     }
 
     const candidateNotices = retrieval.results.slice(0, 8).map((notice) => ({
@@ -143,7 +189,7 @@ export async function POST(request: Request) {
         suggestedKeywords: grounded.keywordHints.length > 0 ? grounded.keywordHints : retrieval.retryKeywords,
       });
       applySessionCookieHeader(response, session.setCookie);
-      return response;
+      return withRateLimitHeaders(response, rateLimit);
     }
 
     const answer = appendCitationMarkdown(grounded.answer, citations);
@@ -156,15 +202,18 @@ export async function POST(request: Request) {
       suggestedKeywords: grounded.keywordHints,
     });
     applySessionCookieHeader(response, session.setCookie);
-    return response;
+    return withRateLimitHeaders(response, rateLimit);
   } catch (error) {
     console.error('Chat API error:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: '공지 Q&A 처리 중 오류가 발생했습니다.',
-      },
-      { status: 500 },
+    return withRateLimitHeaders(
+      NextResponse.json(
+        {
+          success: false,
+          error: '공지 Q&A 처리 중 오류가 발생했습니다.',
+        },
+        { status: 500 },
+      ),
+      rateLimit,
     );
   }
 }

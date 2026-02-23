@@ -7,7 +7,17 @@ const DEFAULT_TOP_K = 8;
 const MAX_TOP_K = 10;
 const MIN_KEYWORD_LENGTH = 2;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const EMBEDDING_MODEL_NAME = process.env.GEMINI_EMBEDDING_MODEL || 'text-embedding-004';
+const STABLE_EMBEDDING_MODEL_NAME = 'gemini-embedding-001';
+const LEGACY_EMBEDDING_MODEL_ALIASES = new Set([
+  'text-embedding-004',
+  'text-embeddings-004',
+  'embedding-001',
+  'embedding-gecko-001',
+  'gemini-embedding-exp',
+  'gemini-embedding-exp-03-07',
+  'gemini-embedding-1',
+]);
+const EMBEDDING_MODEL_NAME = resolveEmbeddingModelName(process.env.GEMINI_EMBEDDING_MODEL);
 const EMBEDDING_TEXT_LIMIT = 1800;
 const EMBEDDING_REORDER_MIN_CANDIDATES = 4;
 const EMBEDDING_LEXICAL_WEIGHT = 0.45;
@@ -120,6 +130,27 @@ function clampTopK(topK?: number): number {
 
 function normalizeSpace(value: string): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function resolveEmbeddingModelName(rawModel?: string): string {
+  const normalized = normalizeSpace(String(rawModel || '')).toLowerCase();
+  if (!normalized) return STABLE_EMBEDDING_MODEL_NAME;
+  if (normalized === STABLE_EMBEDDING_MODEL_NAME) return normalized;
+
+  if (LEGACY_EMBEDDING_MODEL_ALIASES.has(normalized)) {
+    console.warn(`[noticeSearch] Legacy embedding model "${normalized}" detected. Using "${STABLE_EMBEDDING_MODEL_NAME}" instead.`);
+    return STABLE_EMBEDDING_MODEL_NAME;
+  }
+
+  return normalized;
+}
+
+function isModelNotFoundError(error: unknown): boolean {
+  const message = String((error as { message?: unknown })?.message || error || '').toLowerCase();
+  return (
+    message.includes('404') ||
+    (message.includes('not found') && message.includes('model'))
+  );
 }
 
 function normalizeNumber(value: unknown): number | null {
@@ -258,50 +289,67 @@ async function rerankWithEmbeddings(
     if (!apiKey) return results.slice(0, clampTopK(topK));
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: EMBEDDING_MODEL_NAME });
-
-    const queryEmbeddingResponse = await model.embedContent({
-      content: {
-        role: 'user',
-        parts: [{ text: normalizeSpace(question).slice(0, 500) }],
-      },
-      taskType: TaskType.RETRIEVAL_QUERY,
-    });
-    const queryVector = normalizeVector(queryEmbeddingResponse.embedding?.values);
-    if (queryVector.length === 0) return results.slice(0, clampTopK(topK));
-
-    const semanticScoresById = new Map<number, number>();
-    const pending: NoticeSearchResult[] = [];
-
-    for (const result of results) {
-      const fingerprint = buildEmbeddingFingerprint(result);
-      const cached = noticeEmbeddingCache.get(result.id);
-      if (cached && cached.fingerprint === fingerprint && cached.vector.length > 0) {
-        semanticScoresById.set(result.id, normalizeSemanticScore(cosineSimilarity(queryVector, cached.vector)));
-      } else {
-        pending.push(result);
-      }
-    }
-
-    if (pending.length > 0) {
-      const batchResponse = await model.batchEmbedContents({
-        requests: pending.map((result) => ({
-          taskType: TaskType.RETRIEVAL_DOCUMENT,
-          title: result.title.slice(0, 120),
-          content: {
-            role: 'user',
-            parts: [{ text: buildEmbeddingDocumentText(result) }],
-          },
-        })),
+    const collectSemanticScores = async (modelName: string) => {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const queryEmbeddingResponse = await model.embedContent({
+        content: {
+          role: 'user',
+          parts: [{ text: normalizeSpace(question).slice(0, 500) }],
+        },
+        taskType: TaskType.RETRIEVAL_QUERY,
       });
+      const queryVector = normalizeVector(queryEmbeddingResponse.embedding?.values);
+      if (queryVector.length === 0) return new Map<number, number>();
 
-      pending.forEach((result, index) => {
-        const vector = normalizeVector(batchResponse.embeddings?.[index]?.values);
-        if (vector.length === 0) return;
+      const semanticScoresById = new Map<number, number>();
+      const pending: NoticeSearchResult[] = [];
+
+      for (const result of results) {
         const fingerprint = buildEmbeddingFingerprint(result);
-        cacheNoticeEmbedding(result.id, fingerprint, vector);
-        semanticScoresById.set(result.id, normalizeSemanticScore(cosineSimilarity(queryVector, vector)));
-      });
+        const cached = noticeEmbeddingCache.get(result.id);
+        if (cached && cached.fingerprint === fingerprint && cached.vector.length > 0) {
+          semanticScoresById.set(result.id, normalizeSemanticScore(cosineSimilarity(queryVector, cached.vector)));
+        } else {
+          pending.push(result);
+        }
+      }
+
+      if (pending.length > 0) {
+        const batchResponse = await model.batchEmbedContents({
+          requests: pending.map((result) => ({
+            taskType: TaskType.RETRIEVAL_DOCUMENT,
+            title: result.title.slice(0, 120),
+            content: {
+              role: 'user',
+              parts: [{ text: buildEmbeddingDocumentText(result) }],
+            },
+          })),
+        });
+
+        pending.forEach((result, index) => {
+          const vector = normalizeVector(batchResponse.embeddings?.[index]?.values);
+          if (vector.length === 0) return;
+          const fingerprint = buildEmbeddingFingerprint(result);
+          cacheNoticeEmbedding(result.id, fingerprint, vector);
+          semanticScoresById.set(result.id, normalizeSemanticScore(cosineSimilarity(queryVector, vector)));
+        });
+      }
+
+      return semanticScoresById;
+    };
+
+    let semanticScoresById: Map<number, number>;
+    try {
+      semanticScoresById = await collectSemanticScores(EMBEDDING_MODEL_NAME);
+    } catch (error) {
+      if (EMBEDDING_MODEL_NAME !== STABLE_EMBEDDING_MODEL_NAME && isModelNotFoundError(error)) {
+        console.warn(
+          `[noticeSearch] Embedding model "${EMBEDDING_MODEL_NAME}" not found. Retrying with "${STABLE_EMBEDDING_MODEL_NAME}".`,
+        );
+        semanticScoresById = await collectSemanticScores(STABLE_EMBEDDING_MODEL_NAME);
+      } else {
+        throw error;
+      }
     }
 
     if (semanticScoresById.size === 0) {

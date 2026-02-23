@@ -1,9 +1,11 @@
 import { prisma } from '@/lib/prisma';
+import { ensureSystemTables } from '@/lib/systemTables';
 
 export type SystemMetaValue = Record<string, unknown>;
 
 export async function getSystemMeta<T extends SystemMetaValue>(key: string, fallback: T): Promise<T> {
   try {
+    await ensureSystemTables();
     const row = await prisma.systemMeta.findUnique({
       where: { key },
       select: { json: true },
@@ -18,9 +20,14 @@ export async function getSystemMeta<T extends SystemMetaValue>(key: string, fall
 }
 
 export async function setSystemMeta(key: string, value: SystemMetaValue): Promise<void> {
-  await prisma.systemMeta.upsert({
-    where: { key },
-    create: { key, json: JSON.stringify(value) },
-    update: { json: JSON.stringify(value) },
-  });
+  try {
+    await ensureSystemTables();
+    await prisma.systemMeta.upsert({
+      where: { key },
+      create: { key, json: JSON.stringify(value) },
+      update: { json: JSON.stringify(value) },
+    });
+  } catch (error) {
+    console.warn('[systemMeta] set failed:', String(error));
+  }
 }

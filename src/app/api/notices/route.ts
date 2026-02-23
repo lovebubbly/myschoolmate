@@ -263,7 +263,9 @@ export async function GET(request: Request) {
 
     if (autoCrawl) {
       startNoticeAutoCrawler();
-      await ensureFreshNotices('api:notices');
+      void ensureFreshNotices('api:notices').catch((error) => {
+        console.error('[api/notices] autoCrawl failed:', error);
+      });
     }
 
     const where: Prisma.NoticeWhereInput = tags.length

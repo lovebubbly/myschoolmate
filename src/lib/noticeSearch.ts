@@ -117,6 +117,7 @@ type EmbeddingCacheEntry = {
 };
 
 let ensureSearchIndexPromise: Promise<void> | null = null;
+let noticeSearchIndexDisabled = false;
 const noticeEmbeddingCache = new Map<number, EmbeddingCacheEntry>();
 
 function clampTopK(topK?: number): number {
@@ -625,12 +626,18 @@ async function buildNoticeSearchIndex() {
 }
 
 async function ensureNoticeSearchIndex() {
+  if (noticeSearchIndexDisabled) return;
+
   if (!ensureSearchIndexPromise) {
     ensureSearchIndexPromise = buildNoticeSearchIndex().catch((error) => {
+      // Fail-soft: if FTS/DDL is not available (read-only FS, missing fts5, etc.),
+      // keep the service running with LIKE fallback.
+      noticeSearchIndexDisabled = true;
       ensureSearchIndexPromise = null;
-      throw error;
+      console.warn('[noticeSearch] FTS index init disabled:', String(error));
     });
   }
+
   await ensureSearchIndexPromise;
 }
 
@@ -639,7 +646,7 @@ async function queryCandidates(question: string, topK: number): Promise<Candidat
   const ftsQuery = buildFtsMatchQuery(keywords);
   const take = Math.max(topK * 4, 12);
 
-  if (ftsQuery) {
+  if (ftsQuery && !noticeSearchIndexDisabled) {
     try {
       const rows = await prisma.$queryRawUnsafe<NoticeSearchRow[]>(
         `

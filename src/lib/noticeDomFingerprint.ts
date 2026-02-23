@@ -243,24 +243,40 @@ export async function runDomFingerprintCapture(): Promise<DomFingerprintStatus[]
         return getDomFingerprintStatus();
     }
 
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
+    let context: Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>['newContext']>> | null = null;
+    let page: Page | null = null;
 
     const results: DomFingerprintStatus[] = [];
 
     try {
+        browser = await chromium.launch({ headless: true });
+        context = await browser.newContext();
+        page = await context.newPage();
+
         for (const board of NOTICE_DOM_BOARDS) {
             const snapshot = await captureBoardFingerprint(page, board);
             const meta = await persistSnapshot(board, snapshot);
             results.push(formatStatus(board, meta));
         }
+
+        return results;
     } finally {
-        await page.close();
-        await context.close();
-        await browser.close();
+        try {
+            await page?.close();
+        } catch {
+            // ignore
+        }
+        try {
+            await context?.close();
+        } catch {
+            // ignore
+        }
+        try {
+            await browser?.close();
+        } catch {
+            // ignore
+        }
         await releaseSystemLock(LOCK_NAME);
     }
-
-    return results;
 }

@@ -10,9 +10,14 @@ async function main() {
     throw error;
   });
 
-  const { getOpsSnapshot } = await import('@/lib/opsSnapshot');
-  const snapshot = await getOpsSnapshot();
-  process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+  const { prisma } = await import('@/lib/prisma');
+  try {
+    const { getOpsSnapshot } = await import('@/lib/opsSnapshot');
+    const snapshot = await getOpsSnapshot();
+    process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+  } finally {
+    await prisma.$disconnect();
+  }
 }
 
 main().catch((error) => {

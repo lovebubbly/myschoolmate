@@ -21,11 +21,13 @@ export interface NoticeData {
     isPinned: boolean;
 }
 
+const INFORM_BASE_URL = 'https://inform.chungbuk.ac.kr';
+
 const BOARDS = [
-    { name: 'Academic/Scholarship', url: 'https://inform.chungbuk.ac.kr/cisub5_1' },
-    { name: 'General', url: 'https://inform.chungbuk.ac.kr/cisub5_2' },
-    { name: 'Employment', url: 'https://inform.chungbuk.ac.kr/cisub5_3' },
-    { name: 'News', url: 'https://inform.chungbuk.ac.kr/cisub5_4' }
+    { name: 'Academic/Scholarship', url: `${INFORM_BASE_URL}/cisub5_1` },
+    { name: 'General', url: `${INFORM_BASE_URL}/cisub5_2` },
+    { name: 'Employment', url: `${INFORM_BASE_URL}/cisub5_3` },
+    { name: 'News', url: `${INFORM_BASE_URL}/cisub5_4` },
 ];
 
 function normalizeNoticeUrl(rawUrl: string) {

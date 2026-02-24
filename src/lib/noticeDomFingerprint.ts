@@ -40,11 +40,13 @@ export type DomFingerprintStatus = DomFingerprintMeta & {
     changed: boolean;
 };
 
+const INFORM_BASE_URL = 'https://inform.chungbuk.ac.kr';
+
 export const NOTICE_DOM_BOARDS: NoticeBoard[] = [
-    { name: 'Academic/Scholarship', slug: 'academic-scholarship', url: 'https://inform.chungbuk.ac.kr/cisub5_1' },
-    { name: 'General', slug: 'general', url: 'https://inform.chungbuk.ac.kr/cisub5_2' },
-    { name: 'Employment', slug: 'employment', url: 'https://inform.chungbuk.ac.kr/cisub5_3' },
-    { name: 'News', slug: 'news', url: 'https://inform.chungbuk.ac.kr/cisub5_4' },
+    { name: 'Academic/Scholarship', slug: 'academic-scholarship', url: `${INFORM_BASE_URL}/cisub5_1` },
+    { name: 'General', slug: 'general', url: `${INFORM_BASE_URL}/cisub5_2` },
+    { name: 'Employment', slug: 'employment', url: `${INFORM_BASE_URL}/cisub5_3` },
+    { name: 'News', slug: 'news', url: `${INFORM_BASE_URL}/cisub5_4` },
 ];
 
 const DEFAULT_META: DomFingerprintMeta = {

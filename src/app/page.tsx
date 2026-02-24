@@ -48,6 +48,7 @@ interface Notice {
   favoriteCount?: number;
   isEasyToMiss?: boolean;
   isPinned: boolean;
+  matchesWatchlist?: boolean;
 }
 
 type RelevanceReason = "grade_match" | "income_match" | "gpa_match" | "track_match" | "deadline_soon" | "career_priority";
@@ -127,6 +128,7 @@ const NOTICE_TAG_MODE_KEY = 'dashboard-tag-mode-v1';
 const NOTICE_SORT_MODE_KEY = 'dashboard-sort-mode-v1';
 const NOTICE_DEADLINE_WINDOW_KEY = 'dashboard-deadline-window-v1';
 const NOTICE_FAVORITE_ONLY_KEY = 'dashboard-favorite-only-v1';
+const NOTICE_WATCHLIST_ONLY_KEY = 'dashboard-watchlist-only-v1';
 const NOTICE_BROWSER_NOTIFICATIONS_KEY = 'dashboard-browser-notifications-v1';
 const NOTICE_NOTIFIED_NEW_IDS_KEY = 'dashboard-notified-new-ids-v1';
 const NOTICE_NOTIFIED_URGENT_IDS_KEY = 'dashboard-notified-urgent-ids-v1';
@@ -631,6 +633,11 @@ function NoticeCard({
                     학년 매칭
                   </span>
                 )}
+                {notice.matchesWatchlist && (
+                  <span className="px-2.5 py-1 rounded-[10px] bg-purple-500/[0.06] text-purple-700 dark:text-purple-300 border border-purple-500/20 text-[11px] font-medium">
+                    워치리스트
+                  </span>
+                )}
               </div>
               <span className="text-xs text-muted-foreground/60 font-medium shrink-0 tracking-tight">{notice.date}</span>
             </div>
@@ -1013,6 +1020,7 @@ export default function Home() {
   const [sortMode, setSortMode] = useState<'latest' | 'relevance' | 'deadline'>('latest');
   const [deadlineWithinDays, setDeadlineWithinDays] = useState<number | null>(null);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [browserNotificationsEnabled, setBrowserNotificationsEnabled] = useState(false);
   const [webPushSupported, setWebPushSupported] = useState(false);
   const [webPushConfigured, setWebPushConfigured] = useState(false);
@@ -1576,6 +1584,9 @@ export default function Home() {
     if (favoriteOnly) {
       queryParams.set('favoriteOnly', '1');
     }
+    if (watchlistOnly) {
+      queryParams.set('watchlistOnly', '1');
+    }
     if (activePresetId !== null) {
       queryParams.set('presetId', String(activePresetId));
     }
@@ -1617,6 +1628,7 @@ export default function Home() {
               : (Number.isFinite(Number(notice.dday)) ? Number(notice.dday) : null),
             favoriteCount: Number.isFinite(Number(notice.favoriteCount)) ? Number(notice.favoriteCount) : 0,
             isEasyToMiss: Boolean(notice.isEasyToMiss),
+            matchesWatchlist: Boolean(notice.matchesWatchlist),
           }))
         );
         setNotices(incomingNotices);
@@ -1643,6 +1655,7 @@ export default function Home() {
     activePresetId,
     deadlineWithinDays,
     favoriteOnly,
+    watchlistOnly,
     filterProfile.gpa,
     filterProfile.grade,
     filterProfile.income,
@@ -1686,6 +1699,11 @@ export default function Home() {
     const savedFavoriteOnly = localStorage.getItem(NOTICE_FAVORITE_ONLY_KEY);
     if (savedFavoriteOnly !== null) {
       setFavoriteOnly(savedFavoriteOnly === '1');
+    }
+
+    const savedWatchlistOnly = localStorage.getItem(NOTICE_WATCHLIST_ONLY_KEY);
+    if (savedWatchlistOnly !== null) {
+      setWatchlistOnly(savedWatchlistOnly === '1');
     }
 
     const savedBrowserNotifications = localStorage.getItem(NOTICE_BROWSER_NOTIFICATIONS_KEY);
@@ -1823,6 +1841,11 @@ export default function Home() {
 
   useEffect(() => {
     if (!clientStateHydrated) return;
+    localStorage.setItem(NOTICE_WATCHLIST_ONLY_KEY, watchlistOnly ? '1' : '0');
+  }, [watchlistOnly, clientStateHydrated]);
+
+  useEffect(() => {
+    if (!clientStateHydrated) return;
     localStorage.setItem(NOTICE_BROWSER_NOTIFICATIONS_KEY, browserNotificationsEnabled ? '1' : '0');
   }, [browserNotificationsEnabled, clientStateHydrated]);
 
@@ -1930,7 +1953,7 @@ export default function Home() {
 
   useEffect(() => {
     setVisibleCount(ITEMS_PER_PAGE);
-  }, [selectedCategory, searchQuery, filterProfile, selectedTags, tagMode, sortMode, deadlineWithinDays, favoriteOnly, activePresetId]);
+  }, [selectedCategory, searchQuery, filterProfile, selectedTags, tagMode, sortMode, deadlineWithinDays, favoriteOnly, watchlistOnly, activePresetId]);
 
   async function refreshNotices() {
     setLoading(true);
@@ -3149,6 +3172,19 @@ export default function Home() {
                             </Button>
 
                             <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setWatchlistOnly((prev) => !prev)}
+                              className={`h-10 px-4 rounded-full flex-1 sm:flex-none text-xs font-semibold ${watchlistOnly
+                                ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/30'
+                                : 'text-muted-foreground border border-border'}`}
+                            >
+                              <BookmarkPlus className="w-4 h-4 mr-1.5" />
+                              워치리스트만
+                            </Button>
+
+                            <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => setShowFilters(!showFilters)}
@@ -3195,6 +3231,7 @@ export default function Home() {
                                 onClick={() => {
                                   setFilterProfile({ grade: 0, income: 11, gpa: 0 });
                                   setFavoriteOnly(false);
+                                  setWatchlistOnly(false);
                                   setActivePresetId(null);
                                 }}
                                 className="text-xs h-7 hover:bg-muted text-muted-foreground hover:text-foreground"

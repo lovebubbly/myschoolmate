@@ -289,6 +289,40 @@ function encodeDashboardState(state: DashboardState | null | undefined): string 
     return JSON.stringify(state);
 }
 
+function mergeNestedObject<T extends Record<string, unknown> | undefined>(
+    currentValue: T,
+    incomingValue: T,
+): T {
+    if (incomingValue === undefined) return currentValue;
+    if (!incomingValue || Object.keys(incomingValue).length === 0) return {} as T;
+    return { ...(currentValue ?? {}), ...(incomingValue ?? {}) } as T;
+}
+
+function mergeDashboardState(current: DashboardState | null, incoming: DashboardState | null): DashboardState | null {
+    // dashboardState=null is treated as an explicit clear.
+    if (incoming === null) return null;
+    if (!incoming) return current;
+
+    const next: DashboardState = {
+        ...(current ?? {}),
+        ...incoming,
+    };
+
+    if (incoming.enabledWidgets !== undefined) {
+        next.enabledWidgets = mergeNestedObject(current?.enabledWidgets, incoming.enabledWidgets);
+    }
+
+    if (incoming.watchlist !== undefined) {
+        next.watchlist = mergeNestedObject(current?.watchlist, incoming.watchlist);
+    }
+
+    if (incoming.briefing !== undefined) {
+        next.briefing = mergeNestedObject(current?.briefing, incoming.briefing);
+    }
+
+    return next;
+}
+
 function withParsedDashboardState(profile: UserProfile) {
     const dashboardState = decodeDashboardState(profile.dashboardState ?? undefined);
     return { ...profile, dashboardState };
@@ -367,8 +401,17 @@ export async function POST(req: Request) {
         if (hasNotificationEmail) updatePayload.notificationEmail = hasNotificationEmailValue;
         if (hasEmailAlertsEnabled) updatePayload.emailAlertsEnabled = parsedEmailAlertsEnabled.value;
 
+        const encodedDashboardState = hasDashboardState
+            ? encodeDashboardState(
+                mergeDashboardState(
+                    decodeDashboardState(session.profile.dashboardState ?? undefined),
+                    parsedDashboardState.value,
+                ),
+            )
+            : null;
+
         if (hasDashboardState) {
-            updatePayload.dashboardState = encodeDashboardState(parsedDashboardState.value);
+            updatePayload.dashboardState = encodedDashboardState;
         }
 
         const profile = await prisma.userProfile.upsert({
@@ -383,7 +426,7 @@ export async function POST(req: Request) {
                 cohortYear: hasCohortYear ? parsedCohortYear.value : session.profile.cohortYear,
                 notificationEmail: hasNotificationEmail ? hasNotificationEmailValue : session.profile.notificationEmail,
                 emailAlertsEnabled: hasEmailAlertsEnabled ? parsedEmailAlertsEnabled.value ?? false : false,
-                dashboardState: hasDashboardState ? encodeDashboardState(parsedDashboardState.value) : session.profile.dashboardState,
+                dashboardState: hasDashboardState ? encodedDashboardState : session.profile.dashboardState,
             },
         });
 

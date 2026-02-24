@@ -28,6 +28,8 @@ export default function Settings() {
     const [cohortYear, setCohortYear] = useState('');
     const [notificationEmail, setNotificationEmail] = useState('');
     const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(false);
+    const [watchlistKeywords, setWatchlistKeywords] = useState('');
+    const [watchlistTags, setWatchlistTags] = useState('');
     const [tracks, setTracks] = useState<Track[]>([]);
     const [saving, setSaving] = useState(false);
     const [switchingSession, setSwitchingSession] = useState(false);
@@ -36,6 +38,15 @@ export default function Settings() {
     const [mailStatus, setMailStatus] = useState<string | null>(null);
     const [authProviders, setAuthProviders] = useState<Array<{ id: string; name: string }>>([]);
     const [providersReady, setProvidersReady] = useState(false);
+
+    const parseDelimitedList = (raw: string) => Array.from(
+        new Set(
+            raw
+                .split(/[,\n]/g)
+                .map((item) => item.trim())
+                .filter(Boolean),
+        ),
+    );
 
     async function fetchTracks() {
         const res = await fetch('/api/curriculum');
@@ -54,6 +65,18 @@ export default function Settings() {
             setTrackId(String(data.profile.trackId || ''));
             setNotificationEmail(String(data.profile.notificationEmail || data.profile.email || ''));
             setEmailAlertsEnabled(Boolean(data.profile.emailAlertsEnabled));
+
+            const dashboardState = data.profile.dashboardState;
+            if (dashboardState && typeof dashboardState === 'object' && !Array.isArray(dashboardState)) {
+                const watchlist = (dashboardState as Record<string, unknown>).watchlist;
+                if (watchlist && typeof watchlist === 'object' && !Array.isArray(watchlist)) {
+                    const watchlistRaw = watchlist as Record<string, unknown>;
+                    const keywords = Array.isArray(watchlistRaw.keywords) ? watchlistRaw.keywords.map((v) => String(v ?? '').trim()).filter(Boolean) : [];
+                    const tags = Array.isArray(watchlistRaw.tags) ? watchlistRaw.tags.map((v) => String(v ?? '').trim()).filter(Boolean) : [];
+                    setWatchlistKeywords(keywords.join(', '));
+                    setWatchlistTags(tags.join(', '));
+                }
+            }
         }
     }
 
@@ -95,7 +118,13 @@ export default function Settings() {
                 trackId: trackId ? parseInt(trackId) : null,
                 cohortYear: cohortYear ? parseInt(cohortYear) : null,
                 notificationEmail: normalizedEmail || null,
-                emailAlertsEnabled
+                emailAlertsEnabled,
+                dashboardState: {
+                    watchlist: {
+                        keywords: parseDelimitedList(watchlistKeywords),
+                        tags: parseDelimitedList(watchlistTags),
+                    },
+                },
             };
             console.log('Sending payload:', payload);
 
@@ -331,8 +360,35 @@ export default function Settings() {
                         </div>
                     </div>
 
-                        <div className="space-y-3 rounded-xl border border-border p-4 bg-muted/20">
-                            <p className="text-sm font-bold text-muted-foreground">메일 알림</p>
+                    <div className="space-y-3 rounded-xl border border-border p-4 bg-muted/20">
+                        <p className="text-sm font-bold text-muted-foreground">워치리스트</p>
+                        <div className="space-y-2">
+                            <label htmlFor="watchlistKeywords" className="text-xs text-muted-foreground">키워드 (쉼표/줄바꿈으로 구분)</label>
+                            <textarea
+                                id="watchlistKeywords"
+                                className="w-full bg-background p-3 rounded-xl font-medium focus:ring-2 focus:ring-primary/20 outline-none border border-border min-h-[88px]"
+                                placeholder="예: 장학, 등록, 인턴"
+                                value={watchlistKeywords}
+                                onChange={(e) => setWatchlistKeywords(e.target.value)}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label htmlFor="watchlistTags" className="text-xs text-muted-foreground">태그 (쉼표/줄바꿈으로 구분)</label>
+                            <textarea
+                                id="watchlistTags"
+                                className="w-full bg-background p-3 rounded-xl font-medium focus:ring-2 focus:ring-primary/20 outline-none border border-border min-h-[72px]"
+                                placeholder="예: 장학, 학사"
+                                value={watchlistTags}
+                                onChange={(e) => setWatchlistTags(e.target.value)}
+                            />
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                            * 등록한 키워드/태그와 매칭되는 공지는 대시보드에서 빠르게 필터링할 수 있어요.
+                        </p>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-border p-4 bg-muted/20">
+                        <p className="text-sm font-bold text-muted-foreground">메일 알림</p>
                         <div className="space-y-2">
                             <label htmlFor="notificationEmail" className="text-xs text-muted-foreground">알림 수신 이메일</label>
                             <input

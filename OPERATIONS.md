@@ -77,6 +77,8 @@
 
 ## 7) 크롤러 상태 가시성
 
+- Playwright 실행 원칙: **headless 우선** (필요해서 headful로 띄울 때만 명시적으로 `headless: false` 사용)
+
 - 내부 상태 노출: `/lib/noticeAutoCrawler.ts`의 상태에 아래 값이 포함됨
   - `lastFailureReason`
   - `retryCount`

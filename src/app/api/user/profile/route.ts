@@ -13,6 +13,8 @@ const VALID_WIDGET_IDS = ['inbox', 'cafeteria', 'notices'] as const;
 const VALID_BRIEFING_TONES = ['friendly', 'concise', 'formal', 'motivational'] as const;
 const VALID_BRIEFING_LENGTHS = ['short', 'medium', 'long'] as const;
 const VALID_BRIEFING_FOCUS_CATEGORIES = ['Academic', 'Scholarship', 'Employment', 'General', 'News'] as const;
+const WATCHLIST_MAX_ITEMS = 30;
+const WATCHLIST_MAX_LENGTH = 40;
 
 type BriefingTone = (typeof VALID_BRIEFING_TONES)[number];
 type BriefingLength = (typeof VALID_BRIEFING_LENGTHS)[number];
@@ -25,6 +27,10 @@ type DashboardState = {
         inbox?: boolean;
         cafeteria?: boolean;
         notices?: boolean;
+    };
+    watchlist?: {
+        keywords?: string[];
+        tags?: string[];
     };
     briefing?: {
         tone?: BriefingTone;
@@ -105,6 +111,18 @@ function parseOptionalBoolean(value: unknown) {
     return { provided: true, value };
 }
 
+function normalizeWatchlistItems(raw: unknown) {
+    if (raw === undefined) return { provided: false, value: [] as string[] };
+    if (!Array.isArray(raw)) return { provided: true, value: [] as string[], invalid: true };
+
+    const cleaned = raw
+        .map((item) => String(item ?? '').trim())
+        .filter((item) => item.length > 0 && item.length <= WATCHLIST_MAX_LENGTH);
+    const deduped = Array.from(new Set(cleaned)).slice(0, WATCHLIST_MAX_ITEMS);
+
+    return { provided: true, value: deduped };
+}
+
 function parseDashboardState(value: unknown) {
     if (value === undefined) {
         return { provided: false, value: null as DashboardState | null };
@@ -176,6 +194,36 @@ function parseDashboardState(value: unknown) {
         }
 
         next.enabledWidgets = enabled;
+    }
+
+    if ('watchlist' in raw) {
+        const rawWatchlist = raw.watchlist;
+        if (rawWatchlist === null) {
+            next.watchlist = {};
+        } else if (typeof rawWatchlist !== 'object' || Array.isArray(rawWatchlist)) {
+            return { provided: true, value: null as DashboardState | null, invalid: true };
+        } else {
+            const watchlistRaw = rawWatchlist as Record<string, unknown>;
+            const parsedWatchlist: NonNullable<DashboardState['watchlist']> = {};
+
+            if ('keywords' in watchlistRaw) {
+                const parsedKeywords = normalizeWatchlistItems(watchlistRaw.keywords);
+                if (parsedKeywords.invalid) {
+                    return { provided: true, value: null as DashboardState | null, invalid: true };
+                }
+                if (parsedKeywords.provided) parsedWatchlist.keywords = parsedKeywords.value;
+            }
+
+            if ('tags' in watchlistRaw) {
+                const parsedTags = normalizeWatchlistItems(watchlistRaw.tags);
+                if (parsedTags.invalid) {
+                    return { provided: true, value: null as DashboardState | null, invalid: true };
+                }
+                if (parsedTags.provided) parsedWatchlist.tags = parsedTags.value;
+            }
+
+            next.watchlist = parsedWatchlist;
+        }
     }
 
     const rawBriefing = raw.briefing ?? raw.briefingOptions ?? raw.briefingSettings;

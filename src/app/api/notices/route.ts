@@ -30,6 +30,10 @@ type NormalizedCategory = 'Academic' | 'Scholarship' | 'General' | 'Employment' 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const ELIGIBILITY_EXPLAIN_ENABLED =
   process.env.FEATURE_ELIGIBILITY_EXPLAIN === '1' || process.env.NODE_ENV !== 'production';
+const WATCHLIST_ENABLED =
+  process.env.FEATURE_WATCHLIST === '1' || process.env.NODE_ENV !== 'production';
+const WATCHLIST_MAX_ITEMS = 30;
+const WATCHLIST_MAX_LENGTH = 40;
 
 function normalizeNoticeLimit(raw: string | null) {
   const parsed = Number(raw);
@@ -121,6 +125,89 @@ function parseProfileOverrides(raw: string | null | undefined) {
   }
 }
 
+type WatchlistState = {
+  keywords: string[];
+  tags: string[];
+};
+
+type WatchlistMatcher = {
+  keywords: string[];
+  tagSet: Set<string>;
+};
+
+function normalizeWatchlistItems(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const cleaned = raw
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item.length > 0 && item.length <= WATCHLIST_MAX_LENGTH);
+  return Array.from(new Set(cleaned)).slice(0, WATCHLIST_MAX_ITEMS);
+}
+
+function parseWatchlistState(rawState: string | null | undefined): WatchlistState {
+  if (!rawState) return { keywords: [], tags: [] };
+  try {
+    const parsed = JSON.parse(rawState) as Record<string, unknown>;
+    const watchlist = parsed?.watchlist;
+    if (!watchlist || typeof watchlist !== 'object' || Array.isArray(watchlist)) {
+      return { keywords: [], tags: [] };
+    }
+
+    const watchlistRaw = watchlist as Record<string, unknown>;
+    return {
+      keywords: normalizeWatchlistItems(watchlistRaw.keywords),
+      tags: normalizeWatchlistItems(watchlistRaw.tags),
+    };
+  } catch {
+    return { keywords: [], tags: [] };
+  }
+}
+
+function buildWatchlistMatcher(rawState: string | null | undefined): WatchlistMatcher {
+  const state = parseWatchlistState(rawState);
+  const keywords = state.keywords
+    .map((keyword) => keyword.toLowerCase())
+    .filter(Boolean);
+  const tagSet = new Set(state.tags.map((tag) => toTagSlug(tag)).filter(Boolean));
+  return { keywords, tagSet };
+}
+
+function matchesWatchlist(
+  notice: {
+    title: string;
+    summary?: string | null;
+    content?: string | null;
+    tags?: Array<{ tag?: { name?: string | null; slug?: string | null } }>;
+  },
+  matcher: WatchlistMatcher,
+) {
+  if (matcher.keywords.length === 0 && matcher.tagSet.size === 0) return false;
+
+  if (matcher.keywords.length > 0) {
+    const haystack = [notice.title, notice.summary, notice.content]
+      .map((value) => (typeof value === 'string' ? value : ''))
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    if (haystack && matcher.keywords.some((keyword) => haystack.includes(keyword))) {
+      return true;
+    }
+  }
+
+  if (matcher.tagSet.size === 0) return false;
+  for (const entry of notice.tags ?? []) {
+    const rawName = typeof entry.tag?.name === 'string' ? entry.tag?.name : '';
+    const rawSlug = typeof entry.tag?.slug === 'string' ? entry.tag?.slug : '';
+    const normalizedName = rawName ? toTagSlug(rawName) : '';
+    const normalizedSlug = rawSlug ? toTagSlug(rawSlug) : '';
+    if ((normalizedName && matcher.tagSet.has(normalizedName)) || (normalizedSlug && matcher.tagSet.has(normalizedSlug))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function isScholarshipSignal(notice: {
   title: string;
   scholarshipType?: string | null;
@@ -206,6 +293,8 @@ export async function GET(request: Request) {
     const favoriteOnly = normalizeBooleanFlag(searchParams.get('favoriteOnly'));
     const eligibilityExplainEnabled = ELIGIBILITY_EXPLAIN_ENABLED;
     const eligibleOnly = eligibilityExplainEnabled && normalizeBooleanFlag(searchParams.get('eligibleOnly'));
+    const watchlistOnly = WATCHLIST_ENABLED && normalizeBooleanFlag(searchParams.get('watchlistOnly'));
+    const watchlistMatcher = WATCHLIST_ENABLED ? buildWatchlistMatcher(session.profile.dashboardState) : null;
 
     const rawTags = searchParams.getAll('tags');
     const tagMode = (searchParams.get('mode') || searchParams.get('tagMode') || 'any').toLowerCase() === 'all' ? 'all' : 'any';
@@ -392,6 +481,9 @@ export async function GET(request: Request) {
 
         if (eligibleOnly && eligibility?.status !== 'eligible') return null;
 
+        const watchlistMatched = watchlistMatcher ? matchesWatchlist(notice, watchlistMatcher) : false;
+        if (watchlistOnly && !watchlistMatched) return null;
+
         const isFavorite = favoriteNoticeIdSet.has(notice.id);
         if (favoriteOnly && !isFavorite) return null;
         const favoriteCount = favoriteCountByNoticeId.get(notice.id) ?? 0;
@@ -415,6 +507,7 @@ export async function GET(request: Request) {
           isUrgent: relevance.isUrgent,
           urgency: relevance.urgency,
           dday: relevance.dday,
+          ...(WATCHLIST_ENABLED ? { matchesWatchlist: watchlistMatched } : {}),
           ...(eligibilityExplainEnabled && eligibility
             ? { eligibilityStatus: eligibility.status, eligibilityReasons: eligibility.reasons }
             : {}),

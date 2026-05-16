@@ -112,7 +112,30 @@
   }
 
   .theme-transition,
-  .theme-transition * {
+  .theme-transition body,
+  .theme-transition :where(
+    nav,
+    main,
+    section,
+    article,
+    aside,
+    header,
+    footer,
+    button,
+    input,
+    textarea,
+    select,
+    [role="dialog"],
+    [data-theme-surface],
+    [data-testid="notice-card"],
+    .bg-background,
+    .bg-card,
+    .bg-popover,
+    .bg-muted,
+    .text-foreground,
+    .text-muted-foreground,
+    .border-border
+  ) {
     transition-property: background-color, color, border-color, fill, stroke, text-decoration-color !important;
     transition-duration: var(--theme-transition-duration) !important;
     transition-timing-function: var(--theme-transition-easing) !important;

@@ -21,6 +21,7 @@ interface MenuItem {
 export function CafeteriaWidget() {
     const [menus, setMenus] = useState<MenuItem[]>([]);
     const [loading, setLoading] = useState(false);
+    const [refreshError, setRefreshError] = useState(false);
     const [selectedRest, setSelectedRest] = useState('Hanbit');
     const [selectedMeal, setSelectedMeal] = useState<MealType>('LUNCH');
     const [selectedDate, setSelectedDate] = useState(new Date());
@@ -31,17 +32,22 @@ export function CafeteriaWidget() {
         return `${m}.${d}`;
     }, []);
 
-    const fetchMenus = useCallback(async (date: Date) => {
+    const fetchMenus = useCallback(async (date: Date, options?: { refresh?: boolean }) => {
         setLoading(true);
         try {
+            setRefreshError(false);
             const dateStr = formatDate(date);
-            const res = await fetch(`/api/menu?date=${dateStr}`);
+            const query = new URLSearchParams({ date: dateStr });
+            if (options?.refresh) query.set('refresh', '1');
+            const res = await fetch(`/api/menu?${query.toString()}`);
             const data = await res.json();
             if (data.success) {
                 setMenus(data.menus);
+                setRefreshError(Boolean(data.refreshError));
             }
         } catch (e) {
             console.error(e);
+            setRefreshError(true);
         }
         setLoading(false);
     }, [formatDate]);
@@ -77,14 +83,11 @@ export function CafeteriaWidget() {
     };
 
     const refreshMenu = async () => {
-        setLoading(true);
         try {
-            await fetch('/api/menu', { method: 'POST' });
-            await fetchMenus(selectedDate);
+            await fetchMenus(selectedDate, { refresh: true });
         } catch (e) {
             console.error(e);
         }
-        setLoading(false);
     };
 
     // Helper to check if a meal type has data for the selected restaurant
@@ -230,6 +233,7 @@ export function CafeteriaWidget() {
                                 <Utensils className="w-8 h-8 opacity-20" />
                                 <span>오늘은 운영하지 않아요</span>
                                 {loading && <span className="text-xs opacity-70 animate-pulse">메뉴 확인 중...</span>}
+                                {refreshError && !loading && <span className="text-xs text-orange-500/80">갱신이 지연되어 저장된 메뉴를 보여드려요.</span>}
                             </div>
                         )}
                     </motion.div>

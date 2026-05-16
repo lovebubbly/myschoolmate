@@ -645,6 +645,56 @@ export async function analyzeNotice(title: string, body: string, category?: stri
     minGpa?: number | null;
     tags: string[];
 }> {
+    const normalizeSummary = (raw: unknown) => {
+        if (typeof raw === 'string' && raw.trim()) return raw.trim();
+        if (Array.isArray(raw)) {
+            const joined = raw.map((item) => String(item || '').trim()).filter(Boolean).join(' ');
+            if (joined) return joined;
+        }
+        return "요약 없음";
+    };
+
+    const normalizeScholarshipTypeValue = (raw: unknown) => {
+        const allowed = new Set(['Tuition', 'LivingSupport', 'Program', 'Job', 'Other']);
+        const values = Array.isArray(raw) ? raw : [raw];
+        for (const value of values) {
+            const normalized = String(value || '').trim();
+            if (allowed.has(normalized)) return normalized;
+        }
+        return "Other";
+    };
+
+    const parseAiDeadline = (raw: unknown) => {
+        const match = String(raw || '').match(/(20[2-3][0-9])[.\-/]\s*([0-1]?[0-9])[.\-/]\s*([0-3]?[0-9])/);
+        if (!match) return null;
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+        if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+        return { year, month, day };
+    };
+
+    const formatAiDeadline = (year: number, month: number, day: number) =>
+        `${year}.${String(month).padStart(2, '0')}.${String(day).padStart(2, '0')}`;
+
+    const normalizeAiDeadline = (raw: unknown, groundingText: string) => {
+        const parsed = parseAiDeadline(raw);
+        if (!parsed) return null;
+
+        const contextYears = Array.from(new Set(
+            Array.from(groundingText.matchAll(/20[2-3][0-9]/g)).map((match) => Number(match[0])),
+        )).filter((year) => Number.isFinite(year));
+        if (contextYears.length > 0 && !contextYears.includes(parsed.year)) {
+            const preferredYear = Math.max(...contextYears);
+            return formatAiDeadline(preferredYear, parsed.month, parsed.day);
+        }
+
+        const currentYear = new Date().getFullYear();
+        if (parsed.year < currentYear - 1) return null;
+        return formatAiDeadline(parsed.year, parsed.month, parsed.day);
+    };
+
     // 1. Regex Extraction (Cost-free, high precision for format)
     const regexData = extractByRegex(title, body);
     const regexTags = extractTagsByRegex({ title, body, category: category ?? undefined });
@@ -677,10 +727,11 @@ export async function analyzeNotice(title: string, body: string, category?: stri
         const result = await model.generateContent(prompt);
         const aiData = JSON.parse(result.response.text());
         const inferredTags = regexTags.length > 0 ? regexTags : await inferTagsWithAI(title, body);
+        const groundingText = `${title}\n${body}`;
 
         return {
-            summary: aiData.summary || "요약 없음",
-            scholarshipType: aiData.scholarshipType || "Other",
+            summary: normalizeSummary(aiData.summary),
+            scholarshipType: normalizeScholarshipTypeValue(aiData.scholarshipType),
             minGrade: (() => {
                 const val = regexData.minGrade ?? aiData.minGrade;
                 if (!val) return null;
@@ -694,7 +745,7 @@ export async function analyzeNotice(title: string, body: string, category?: stri
                 const num = parseInt(String(val));
                 return isNaN(num) ? null : num;
             })(),
-            applicationDeadline: regexData.applicationDeadline ?? aiData.applicationDeadline,
+            applicationDeadline: regexData.applicationDeadline ?? normalizeAiDeadline(aiData.applicationDeadline, groundingText),
             minGpa: (() => {
                 const val = regexData.minGpa ?? aiData.minGpa;
                 if (!val) return null;

@@ -17,7 +17,7 @@ export function ModeToggle({ className }: ModeToggleProps) {
   const [mounted, setMounted] = React.useState(false)
   const [isTransitioning, setIsTransitioning] = React.useState(false)
   const transitionRef = React.useRef<number | null>(null)
-  const THEME_TRANSITION_MS = 320
+  const THEME_TRANSITION_MS = 260
   const THEME_TRANSITION_EASING = [0.18, 0.89, 0.33, 1] as const
 
   React.useEffect(() => {
@@ -42,22 +42,22 @@ export function ModeToggle({ className }: ModeToggleProps) {
 
     const nextTheme = isDark ? "light" : "dark"
     const root = document.documentElement
-    setTheme(nextTheme)
     setIsTransitioning(true)
 
     if (transitionRef.current !== null) {
       window.clearTimeout(transitionRef.current)
     }
 
+    root.classList.add("theme-transition")
+    void root.offsetWidth
+
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        root.classList.add("theme-transition")
-        transitionRef.current = window.setTimeout(() => {
-          root.classList.remove("theme-transition")
-          setIsTransitioning(false)
-          transitionRef.current = null
-        }, THEME_TRANSITION_MS)
-      })
+      setTheme(nextTheme)
+      transitionRef.current = window.setTimeout(() => {
+        root.classList.remove("theme-transition")
+        setIsTransitioning(false)
+        transitionRef.current = null
+      }, THEME_TRANSITION_MS)
     })
   }, [isDark, isTransitioning, setTheme])
 
@@ -66,9 +66,10 @@ export function ModeToggle({ className }: ModeToggleProps) {
       <Button
         variant="ghost"
         size="icon"
+        aria-label="테마 전환"
         className={cn("relative overflow-hidden rounded-full", className)}
       >
-        <span className="sr-only">Toggle theme</span>
+        <span className="sr-only">테마 전환</span>
       </Button>
     )
   }
@@ -128,7 +129,7 @@ export function ModeToggle({ className }: ModeToggleProps) {
           </motion.div>
         )}
       </AnimatePresence>
-      <span className="sr-only">Toggle theme</span>
+      <span className="sr-only">테마 전환</span>
     </Button>
   )
 }

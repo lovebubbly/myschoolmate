@@ -1,216 +1,215 @@
-
-import { chromium, Page } from 'playwright';
+import * as cheerio from 'cheerio';
+import type { Element } from 'domhandler';
 import { prisma } from '@/lib/prisma';
 
+type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER';
+
 interface MenuData {
-    date: string;       // e.g. "12.29(Mon)"
-    mealType: string;   // "BREAKFAST", "LUNCH", "DINNER"
-    content: string;
-    price?: string;
+  restaurant: string;
+  date: string;
+  mealType: MealType;
+  menuContent: string;
+  price?: string;
 }
 
+type ParsedMenuCard = {
+  menuContent: string;
+  price?: string;
+};
+
+const MENU_SOURCE_URL = 'https://www.cbnucoop.com/service/restaurant/';
 const RESTAURANTS = [
-    { id: 'Hanbit', name: '한빛식당', code: '#tab1' },
-    { id: 'Star', name: '별빛식당', code: '#tab2' },
-    { id: 'Eunhasu', name: '은하수식당', code: '#tab3' },
+  { id: 'Hanbit', selector: '#tab1' },
+  { id: 'Star', selector: '#tab2' },
+  { id: 'Eunhasu', selector: '#tab3' },
 ] as const;
+const WEEK_OFFSETS = [0, 1, -1];
+const REQUEST_TIMEOUT_MS = 15000;
+
+function normalizeText(value: string | null | undefined) {
+  return (value || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+function normalizeInlineText(value: string | null | undefined) {
+  return normalizeText(value).replace(/\s*\n\s*/g, ' ').trim();
+}
+
+function resolveMealType(label: string, fallback: MealType = 'LUNCH'): MealType {
+  if (/아침|조식/.test(label)) return 'BREAKFAST';
+  if (/저녁|석식/.test(label)) return 'DINNER';
+  if (/점심|중식|주말운영|백반|일품/.test(label)) return 'LUNCH';
+  return fallback;
+}
+
+function isClosedMenu(title: string, body: string) {
+  const text = `${title} ${body}`.replace(/\s+/g, '');
+  return /미운영|운영안함|휴무|메뉴없음|등록된메뉴가없습니다/.test(text);
+}
+
+async function fetchMenuHtml(weekOffset: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const url = new URL(MENU_SOURCE_URL);
+    url.searchParams.set('week', String(weekOffset));
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6',
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`CBNU cafeteria responded with ${response.status}`);
+    }
+
+    return response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function attachRenderedMenus($: cheerio.CheerioAPI) {
+  $('#menu-result .menu').each((_, menuElement) => {
+    const tableKey = $(menuElement).attr('data-table');
+    if (!tableKey) return;
+
+    const target = $(`td#table-${tableKey}`).first();
+    if (target.length === 0) return;
+
+    target.append($(menuElement));
+  });
+}
+
+function extractMenuCard($: cheerio.CheerioAPI, card: Element): ParsedMenuCard | null {
+  const $card = $(card);
+  const title = normalizeInlineText($card.find('.card-header').first().text());
+  const sideItems = $card
+    .find('.side')
+    .map((_, side) => normalizeInlineText($(side).text()))
+    .get()
+    .filter(Boolean);
+
+  const bodyText = normalizeText($card.find('.card-body').first().text());
+  if (isClosedMenu(title, bodyText)) return null;
+
+  const prices = Array.from(new Set((bodyText.match(/￦\s*[\d,]+(?:\([^)]*\))?/g) || []).map((price) => price.replace(/\s+/g, ''))));
+  const lines = [title, ...sideItems].filter(Boolean);
+  if (lines.length === 0) return null;
+
+  return {
+    menuContent: lines.join('\n'),
+    price: prices.join(' / ') || undefined,
+  };
+}
+
+export function parseCafeteriaMenuHtml(html: string): MenuData[] {
+  const $ = cheerio.load(html);
+  attachRenderedMenus($);
+
+  const menus: MenuData[] = [];
+
+  for (const restaurant of RESTAURANTS) {
+    const $tab = $(restaurant.selector).first();
+    if ($tab.length === 0) continue;
+
+    const dates = $tab
+      .find('thead th.weekday-title')
+      .map((_, element) => normalizeInlineText($(element).text()))
+      .get()
+      .filter(Boolean);
+
+    if (dates.length === 0) continue;
+
+    let activeMealType: MealType = 'LUNCH';
+
+    $tab.find('tbody tr').each((_, row) => {
+      const $row = $(row);
+      const rowTime = normalizeInlineText($row.find('.row-time').first().text());
+      if (rowTime) {
+        activeMealType = resolveMealType(rowTime, activeMealType);
+        return;
+      }
+
+      const rowLabel = normalizeInlineText($row.find('.row-label').first().text()) || normalizeInlineText($row.children('th').first().text());
+      const mealType = resolveMealType(rowLabel, activeMealType);
+
+      $row.children('td').each((dateIndex, cell) => {
+        const date = dates[dateIndex];
+        if (!date) return;
+
+        const cardResults = $(cell)
+          .find('.menu-body')
+          .map((_, card) => extractMenuCard($, card))
+          .get()
+          .filter((item): item is ParsedMenuCard => Boolean(item?.menuContent));
+
+        if (cardResults.length === 0) return;
+
+        menus.push({
+          restaurant: restaurant.id,
+          date,
+          mealType,
+          menuContent: cardResults.map((item) => item.menuContent).join('\n\n'),
+          price: Array.from(new Set(cardResults.map((item) => item.price).filter(Boolean))).join(' / ') || undefined,
+        });
+      });
+    });
+  }
+
+  return menus;
+}
 
 export async function crawlCafeteriaMenu() {
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
+  const allMenus: MenuData[] = [];
 
-    try {
-        // Crawl previous week (-1), this week (0), and next week (1)
-        const weekOffsets = [-1, 0, 1];
+  for (const weekOffset of WEEK_OFFSETS) {
+    const html = await fetchMenuHtml(weekOffset);
+    allMenus.push(...parseCafeteriaMenuHtml(html));
+  }
 
-        for (const week of weekOffsets) {
-            const page = await context.newPage();
-            const url = `https://www.cbnucoop.com/service/restaurant/?week=${week}`;
-            console.log(`Crawling Week ${week}: ${url}`);
+  const uniqueMenus = new Map<string, MenuData>();
+  for (const menu of allMenus) {
+    const key = `${menu.restaurant}:${menu.date}:${menu.mealType}`;
+    uniqueMenus.set(key, menu);
+  }
 
-            await page.goto(url, { waitUntil: 'domcontentloaded' });
+  let savedCount = 0;
+  for (const menu of uniqueMenus.values()) {
+    await prisma.cafeteriaMenu.upsert({
+      where: {
+        restaurant_date_mealType: {
+          restaurant: menu.restaurant,
+          date: menu.date,
+          mealType: menu.mealType,
+        },
+      },
+      update: {
+        menuContent: menu.menuContent,
+        price: menu.price,
+      },
+      create: {
+        restaurant: menu.restaurant,
+        date: menu.date,
+        mealType: menu.mealType,
+        menuContent: menu.menuContent,
+        price: menu.price,
+      },
+    });
+    savedCount += 1;
+  }
 
-            for (const restaurant of RESTAURANTS) {
-                // Click tab and wait for it to become active
-                try {
-                    await page.click(`a.nav-link[href="${restaurant.code}"]`);
-                    // Wait for the tab content to be visible and active
-                    await page.waitForSelector(`${restaurant.code}.tab-pane.active`, { timeout: 2000 });
-                    await page.waitForTimeout(300); // Extra wait for AJAX content
-                } catch (e) {
-                    console.log(`Failed to click/wait tab ${restaurant.name}:`, e);
-                    continue; // Skip this restaurant if tab is not clickable
-                }
-
-                // Pass the specific tab ID to avoid cross-contamination
-                const menuDataList = await extractMenuFromTable(page, restaurant.code);
-
-                for (const item of menuDataList) {
-                    // Robust filtering
-                    if (!item.content || item.content.trim().length === 0 || item.content === '미운영' || item.date.startsWith('Unknown')) continue;
-                    // Filter out accidentally captured headers like "아침코너" if they sneak in
-                    if (item.content.includes('코너') && item.content.length < 10) continue;
-                    // Filter garbage data that contains restaurant names or generic headers
-                    if (item.content.includes('식당') && item.content.includes('코너')) continue;
-                    // Skip known construction/closure messages - but ALLOW these to be saved as informational
-                    // Actually, let's filter out garbage but KEEP closure notices
-                    // The issue is cross-contamination, not closure notices
-
-                // Skip if the content looks like it's from a different restaurant (cross-contamination check)
-                // This is a more aggressive filter: if it contains vacation period notice, we should store it
-                // but we should NOT store normal menus for a restaurant that's on vacation
-
-                // If it's not a closure notice, make sure it doesn't have closure keywords mixed in
-                // This catches "오삼불고기덮밥" being stored for Eunhasu when it should be closed
-
-                    await prisma.cafeteriaMenu.upsert({
-                        where: {
-                            restaurant_date_mealType: {
-                                restaurant: restaurant.id,
-                                date: item.date,
-                                mealType: item.mealType
-                            }
-                        },
-                        update: {
-                            menuContent: item.content,
-                            price: item.price
-                        },
-                        create: {
-                            restaurant: restaurant.id,
-                            date: item.date,
-                            mealType: item.mealType,
-                            menuContent: item.content,
-                            price: item.price
-                        }
-                    });
-                }
-            }
-            await page.close();
-        }
-
-        console.log("Cafeteria Crawl Complete!");
-
-    } catch (e) {
-        console.error("Cafeteria Crawl Error:", e);
-    } finally {
-        await browser.close();
-    }
-}
-
-async function extractMenuFromTable(page: Page, tabId: string): Promise<MenuData[]> {
-    return await page.evaluate<MenuData[], string>((tabSelector) => {
-        const results: MenuData[] = [];
-
-        // Target the SPECIFIC tab by its ID, not just any 'active' tab
-        const activeTab = document.querySelector(tabSelector);
-        if (!activeTab) return [];
-
-        const table = activeTab.querySelector('table');
-        if (!table) return [];
-
-        // Extract Dates
-        const thead = table.querySelector('thead');
-        const dateHeaders = Array.from(thead?.querySelectorAll('th.weekday-title') || []);
-        // Text: "01.05(월요일)" -> Extract "01.05(월요일)"
-        const dates = dateHeaders.map(th => (th as HTMLElement).innerText.trim());
-
-        const rows = Array.from(table.querySelectorAll('tbody tr'));
-
-        // We need to track the current meal type context because sometimes it spans rows
-        // But looking at the HTML, each actual data row seems to have a `row-label` or `row-time`.
-        // Actually, `row-time` is a full width header. `row-label` is the specific corner name.
-
-        let currentMealType = "LUNCH"; // Default
-
-        rows.forEach(row => {
-            // Case 1: Time Header Row (e.g. "아침코너 ...")
-            const timeHeader = row.querySelector('.row-time');
-            if (timeHeader) {
-                const timeText = (timeHeader as HTMLElement).innerText;
-                if (timeText.includes('아침') || timeText.includes('조식')) currentMealType = "BREAKFAST";
-                else if (timeText.includes('점심') || timeText.includes('중식')) currentMealType = "LUNCH";
-                else if (timeText.includes('저녁') || timeText.includes('석식')) currentMealType = "DINNER";
-                return; // Skip this row, it's just a header
-            }
-
-            // Case 2: Data Row
-            // It usually has hidden ths, a row-label th, and then tds.
-            const cells = Array.from(row.querySelectorAll('td'));
-            // If no tds, might be a structure row we missed?
-            if (cells.length === 0) return;
-
-            // Try to refine meal type from row-label if present
-            const rowLabelEl = row.querySelector('.row-label');
-            const rowLabel = rowLabelEl ? (rowLabelEl as HTMLElement).innerText : "";
-            if (rowLabel) {
-                if (rowLabel.includes('아침')) currentMealType = "BREAKFAST";
-                else if (rowLabel.includes('주말운영')) currentMealType = "LUNCH"; // Weekend lunch usually
-                // Don't override if it's just "한빛식당 점심 ..." (confirms current)
-            }
-
-            // Iterate cells. format: dates[0] -> cells[0], dates[1] -> cells[1] ...
-            // Note: The HTML structure shows tds correspond exactly to the dates in headers?
-            // Let's verify: 5 date headers. 5 tds?
-            // In the user's snippet: <tr>...<th class="row-label">...</th> <td>...</td> <td>...</td> ... </tr>
-            // Yes, the tds follow the ths.
-
-            cells.forEach((cell, index) => {
-                if (index >= dates.length) return; // Boundary check
-
-                const dateStr = dates[index];
-                const menuCard = cell.querySelector('.menu-body');
-
-                if (!menuCard) {
-                    // Empty cell or closed
-                    return;
-                }
-
-                // Extract Main Menu
-                const cardHeader = menuCard.querySelector('.card-header');
-                const mainMenu = cardHeader ? (cardHeader as HTMLElement).innerText.trim() : "";
-
-                // Filter out garbage data and closed status
-                if (!mainMenu || mainMenu === "미운영") return;
-                // Filter out headers that look like "한빛식당 아침 아침코너"
-                if (mainMenu.includes('식당') && mainMenu.includes('코너')) return;
-                if (mainMenu.includes('운영중단')) return; // Explicitly skip construction notices if desired, or keep them? User said "garbage", construction is info. 
-                // The user complained about "trash values" like "Hanbit Breakfast Breakfast Corner".
-                // Detailed construction info is probably fine, but let's stick to the user's specific "trash" complaint.
-
-
-                // Extract Sides
-                const sides = Array.from(menuCard.querySelectorAll('.side')).map(li => (li as HTMLElement).innerText.trim());
-
-                // Extract Price
-                // Price is text node or span.add.commas
-                // Formatting: ￦6,000 \n ￦4,000(조합원)
-                // Let's grab the whole text of card-body but exclude sides?
-                // Or just simplified text extraction
-
-                const fullContent = [mainMenu, ...sides].join('\n');
-
-                // Clean Price Extraction
-                const cardBody = menuCard.querySelector('.card-body');
-                let priceText = "";
-                if (cardBody) {
-                    // Clone to remove sides and get price only?
-                    // Or just regex match ￦...
-                    const bodyText = (cardBody as HTMLElement).innerText;
-                    const priceMatches = bodyText.match(/￦[\d,]+(\(.*\))?/g);
-                    if (priceMatches) {
-                        priceText = priceMatches.join(' / ');
-                    }
-                }
-
-                results.push({
-                    date: dateStr,
-                    mealType: currentMealType,
-                    content: fullContent,
-                    price: priceText
-                });
-            });
-        });
-
-        return results;
-    }, tabId);
+  console.log(`Cafeteria crawl completed. Saved ${savedCount} menus.`);
+  return { savedCount };
 }

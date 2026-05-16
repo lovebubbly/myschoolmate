@@ -9,6 +9,10 @@ const FULL_TO_MD_RANGE_REGEX = new RegExp(
   `(${FULL_DATE_SOURCE})[^\\n]{0,40}?(?:~|～|〜|\\-|–|—|부터)[^\\n]{0,20}?(${MONTH_DAY_SOURCE})`
 );
 const UNTIL_FULL_REGEX = new RegExp(`(${FULL_DATE_SOURCE})[^\\n]{0,20}?까지`);
+const MD_TO_MD_RANGE_REGEX = new RegExp(
+  `(${MONTH_DAY_SOURCE})[^\\n]{0,30}?(?:~|～|〜|\\-|–|—|부터)[^\\n]{0,20}?(${MONTH_DAY_SOURCE})`
+);
+const UNTIL_MD_REGEX = new RegExp(`(${MONTH_DAY_SOURCE})[^\\n]{0,20}?까지`);
 
 const KEYWORDS = ['신청', '접수', '마감', '제출', '등록', '납부'];
 const EXCLUDE_KEYWORDS = ['수업기간', '수업 기간'];
@@ -60,7 +64,16 @@ function toDateValue(dateText: string) {
   return Number(dateText.replace(/\./g, ''));
 }
 
-function extractDeadlineFromLine(line: string): string | null {
+function inferContextYear(text: string): number {
+  const years = Array.from(text.matchAll(/20[2-3][0-9]/g))
+    .map((match) => Number(match[0]))
+    .filter((year) => Number.isFinite(year));
+
+  if (years.length > 0) return Math.max(...years);
+  return new Date().getFullYear();
+}
+
+function extractDeadlineFromLine(line: string, contextYear: number): string | null {
   const fullRange = line.match(FULL_TO_FULL_RANGE_REGEX);
   if (fullRange) {
     const end = normalizeFullDate(fullRange[2] || '');
@@ -82,6 +95,18 @@ function extractDeadlineFromLine(line: string): string | null {
     if (untilDate) return untilDate;
   }
 
+  const mdRange = line.match(MD_TO_MD_RANGE_REGEX);
+  if (mdRange) {
+    const endMd = parseMonthDay(mdRange[2] || '');
+    if (endMd) return formatDate(contextYear, endMd.month, endMd.day);
+  }
+
+  const untilMd = line.match(UNTIL_MD_REGEX);
+  if (untilMd) {
+    const endMd = parseMonthDay(untilMd[1] || '');
+    if (endMd) return formatDate(contextYear, endMd.month, endMd.day);
+  }
+
   return null;
 }
 
@@ -94,6 +119,7 @@ export function extractApplicationDeadlineFromText(rawText: string): string | nu
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
+  const contextYear = inferContextYear(cleaned);
 
   const hasKeyword = (line: string) => KEYWORDS.some((keyword) => line.includes(keyword));
   const isExcluded = (line: string) => EXCLUDE_KEYWORDS.some((keyword) => line.includes(keyword));
@@ -106,9 +132,9 @@ export function extractApplicationDeadlineFromText(rawText: string): string | nu
       Array.from({ length: CONTEXT_LINE_WINDOW }).some((_, offset) => {
         const prevIdx = idx - (offset + 1);
         return prevIdx >= 0 && hasKeyword(lines[prevIdx]);
-      });
+    });
     if (!contextualKeyword) return;
-    const extracted = extractDeadlineFromLine(line);
+    const extracted = extractDeadlineFromLine(line, contextYear);
     if (extracted) keywordCandidates.push(extracted);
   });
 
@@ -118,7 +144,7 @@ export function extractApplicationDeadlineFromText(rawText: string): string | nu
   }
 
   for (const line of lines) {
-    const extracted = extractDeadlineFromLine(line);
+    const extracted = extractDeadlineFromLine(line, contextYear);
     if (extracted) return extracted;
   }
 

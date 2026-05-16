@@ -34,6 +34,7 @@ const WATCHLIST_ENABLED =
   process.env.FEATURE_WATCHLIST === '1' || process.env.NODE_ENV !== 'production';
 const WATCHLIST_MAX_ITEMS = 30;
 const WATCHLIST_MAX_LENGTH = 40;
+const NOTICE_REFRESH_WAIT_TIMEOUT_MS = 12000;
 
 function normalizeNoticeLimit(raw: string | null) {
   const parsed = Number(raw);
@@ -63,6 +64,37 @@ function normalizeBooleanFlag(raw: string | null): boolean {
   if (!raw) return false;
   const value = raw.trim().toLowerCase();
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+const PUBLIC_CRAWLER_FAILURE_REASON = 'NOTICE_REFRESH_DELAYED';
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, reason: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(reason)), timeoutMs);
+    promise
+      .then((value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
+}
+
+function toPublicAutoCrawlerStatus(status: Awaited<ReturnType<typeof getNoticeAutoCrawlerStatus>>) {
+  return {
+    ...status,
+    lastError: status.lastError ? PUBLIC_CRAWLER_FAILURE_REASON : null,
+    lastFailureReason: status.lastFailureReason ? PUBLIC_CRAWLER_FAILURE_REASON : null,
+    lock: status.lock
+      ? {
+          ...status.lock,
+          lockedBy: status.lock.lockedBy ? 'notice-crawler' : null,
+        }
+      : null,
+  };
 }
 
 function computeFreshnessBoost(dateValue?: string | null): number {
@@ -286,7 +318,11 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const session = await resolveUserProfile(request);
-    const autoCrawl = searchParams.get('autoCrawl') !== '0';
+    const autoCrawlParam = searchParams.get('autoCrawl');
+    const autoCrawl = process.env.NODE_ENV === 'production'
+      ? autoCrawlParam === '1'
+      : autoCrawlParam !== '0';
+    const waitForCrawl = normalizeBooleanFlag(searchParams.get('waitForCrawl'));
     const limit = normalizeNoticeLimit(searchParams.get('limit'));
     const sort = normalizeSort(searchParams.get('sort'));
     const deadlineWithinDays = normalizePositiveInt(searchParams.get('deadlineWithinDays'));
@@ -355,11 +391,26 @@ export async function GET(request: Request) {
       },
     });
 
+    let freshness: Awaited<ReturnType<typeof ensureFreshNotices>> | null = null;
+    let freshnessError = false;
     if (autoCrawl) {
       startNoticeAutoCrawler();
-      void ensureFreshNotices('api:notices').catch((error) => {
-        console.error('[api/notices] autoCrawl failed:', error);
-      });
+      if (waitForCrawl) {
+        try {
+          freshness = await withTimeout(
+            ensureFreshNotices('api:notices:manual-refresh'),
+            NOTICE_REFRESH_WAIT_TIMEOUT_MS,
+            PUBLIC_CRAWLER_FAILURE_REASON,
+          );
+        } catch (error) {
+          freshnessError = true;
+          console.error('[api/notices] manual refresh failed:', error);
+        }
+      } else {
+        void ensureFreshNotices('api:notices').catch((error) => {
+          console.error('[api/notices] autoCrawl failed:', error);
+        });
+      }
     }
 
     const where: Prisma.NoticeWhereInput = tags.length
@@ -565,12 +616,17 @@ export async function GET(request: Request) {
           tags,
         }
         : null,
-      autoCrawler: await getNoticeAutoCrawlerStatus(),
+      freshness,
+      freshnessError,
+      autoCrawler: toPublicAutoCrawlerStatus(await getNoticeAutoCrawlerStatus()),
     });
     applySessionCookieHeader(response, session.setCookie);
     return response;
   } catch (error) {
     console.error('Read Error:', error);
-    return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: '공지 목록을 불러오지 못했습니다. 잠시 뒤 다시 시도해 주세요.' },
+      { status: 500 },
+    );
   }
 }
